@@ -8,6 +8,7 @@ from active_adaptation.assets.humanoids.g1 import (
 )
 from active_adaptation.registry import Registry
 
+from .chip_payload import add_wrist_payload
 from mjhub import resolve_asset_reference
 
 registry = Registry.instance()
@@ -350,3 +351,16 @@ for _mode in (5, 11, 13, 15):
         f"g1-mode_{_mode}",
         lambda backend, mode=_mode: _build_g1_cfg(mode, backend),
     )
+
+
+def _build_g1_chip_payload_cfg(backend: str):
+    if backend != "mjlab":
+        raise ValueError("The CHIP payload asset currently supports MJLab only")
+    asset_spec = _build_g1_cfg(15, backend)
+    make_spec = asset_spec.config.spec_fn
+    # Modify a fresh copy, avoiding cumulative additions across builds.
+    asset_spec.config.spec_fn = lambda: add_wrist_payload(make_spec().copy())
+    return asset_spec
+
+
+registry.register("asset", "g1-mode_15-chip-payload", _build_g1_chip_payload_cfg)

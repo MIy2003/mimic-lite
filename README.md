@@ -1,5 +1,32 @@
 # MimicLite
 
+For the MJLab CHIP compliance task (`c=0..0.02 m/N`, no displacement clipping),
+see [CHIP setup, observation contract, and verification](CHIP.md).
+
+## CHIP 训练与部署提醒（2026-09-08）
+
+**右手施力点已不再使用原 BM/CHIP 的 `[0.18, 0.025, 0] m`。**
+新位置是从腕部末端与手掌连接的安装面，沿右腕局部 `+X` 向外
+`5 + 25.4 = 30.4 mm`，不是从腕部质心量起。
+
+- 安装基准：模型 `right_hand_palm_joint`，相对 `right_wrist_yaw_link`
+  为 `[0.0415, -0.003, 0] m`。
+- 新右手点：`[0.0719, -0.003, 0] m`，配置见 [chip.yaml](cfg/task/chip.yaml)。
+- 物理施力点、actor 参考点、实际测量点及 tracking reward 参考点同步使用此偏移。
+  左手和躯干点保持不变；即使只使用力读数，仿真仍保留 `(施力点 - 质心) × F` 的力臂力矩。
+- 载荷位置独立于施力点：237 g 在安装面外 2.5 mm，280 g 在外 17.5 mm。
+  已扣除原橡胶手掌 170 g 及其惯性贡献，右腕合并质量为 **601.576 g**。
+  新载荷采用集中质量近似；原手掌显示与碰撞几何仍保留，不代表完整的实机安装几何。
+
+原始动作 NPZ 和身体 FK 缓存无需重建，点偏移在运行时应用。使用生成的
+`chip_loco_*` 配置时，需要从 `active-adaptation` 目录重新运行
+`projects/mimic-lite/scripts/prepare_chip_loco.py`；`train_chip_loco.sh` 会自动执行此步骤。
+部署端也应对齐新的右手参考点，不要继续无检查地沿用旧 18 cm 点。
+
+**远端版本提醒：** Hugging Face 的 `releases/chip-handoff-20260907` 旧交接包
+未包含本次腕部载荷、扣除 170 g 以及右手施力点变更。交给他人训练前需更新代码包；
+数据集不需要因此重新上传。
+
 ## Setup
 
 Clone the current main branches. Active Adaptation no longer embeds MimicLite

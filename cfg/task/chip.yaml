@@ -1,0 +1,139 @@
+# @package task
+defaults:
+  - observation/priv: root_body_actions
+  - termination: base
+  - _self_
+
+name: G1Chip
+project: mimic_lite
+num_envs: 4096
+max_episode_length: 1000
+terrain: plane
+enable_cameras: false
+viewer:
+  resolution: [1280, 720]
+  lookat: [0.0, 0.0, 0.0]
+  eye: [4.0, 4.0, 4.0]
+sim:
+  step_dt: 0.02
+  isaac_physics_dt: 0.005
+robot:
+  # Extra .237 kg at mounting-face +2.5 mm, .280 kg at +17.5 mm.
+  # Point-mass payload; original rubber-hand 170 g and inertia removed.
+  name: g1-mode_15-chip-payload
+shared:
+  termination_root_body_name: torso_link
+  tracking_body_names: [pelvis, torso_link, ".*_hip_yaw_link", ".*_knee_link", ".*_toe_link", ".*_shoulder_yaw_link", ".*_elbow_link", ".*_wrist_yaw_link"]
+  lower_body_names: [pelvis, torso_link, ".*_hip_yaw_link", ".*_knee_link", ".*_toe_link"]
+  lower_joint_names: [".*_hip_.*_joint", ".*_knee_joint", ".*_ankle_.*_joint"]
+input:
+  action:
+    _target_: mimic_lite.JointPosition
+    action_scaling:
+      .*_hip_yaw_joint: 0.55
+      .*_hip_roll_joint: 0.35
+      .*_hip_pitch_joint: 0.55
+      .*_knee_joint: 0.35
+      .*_ankle_pitch_joint: 0.44
+      .*_ankle_roll_joint: 0.44
+      waist_roll_joint: 0.44
+      waist_pitch_joint: 0.44
+      waist_yaw_joint: 0.55
+      .*_shoulder_pitch_joint: 0.44
+      .*_shoulder_roll_joint: 0.44
+      .*_shoulder_yaw_joint: 0.44
+      .*_elbow_joint: 0.44
+      .*_wrist_roll_joint: 0.44
+      .*_wrist_pitch_joint: 0.44
+      .*_wrist_yaw_joint: 0.44
+    min_delay: 1
+    max_delay: 3
+    alpha_range: [0.8, 1.0]
+command:
+  _target_: mimic_lite.ChipTracking
+  motion_cfgs:
+    chip_motion:
+      path: ${oc.env:CHIP_MOTION_DIR,../any4hdmi/output/g1/lafan}
+      weight: 1.0
+      full_motion: true
+  tracking_body_names: ${task.shared.tracking_body_names}
+  obs_body_names: ${task.shared.tracking_body_names}
+  tracking_joint_names: ["waist_.*_joint", ".*_hip_.*_joint", ".*_knee_joint", ".*_ankle_.*_joint", ".*_shoulder_.*_joint", ".*_elbow_joint", ".*_wrist_.*_joint"]
+  root_body_name: pelvis
+  anchor_body_name: pelvis
+  future_steps: [0, 1]
+  diff_future_steps: [0, 1]
+  init_joint_pos_noise: 0.1
+  init_joint_vel_noise: 0.1
+  rewind_prob: 0.8
+  rewind_steps_range: [25, 125]
+  chip:
+    # Physical units m/N. No displacement clipping, including at c=0.02.
+    compliance_max: [0.02, 0.02, 0.0]
+    compliance_scale: 10.0
+    compliance_duration: [100, 200]
+    zero_probability: 0.25
+    max_probability: 0.25
+    sampling_power: 2.0
+    max_force: 20.0
+    force_duration: [50, 100]
+    force_interval: 100
+    body_probabilities: [0.15, 0.75, 0.10]
+    multi_body_probability: 0.10
+    warmup_steps: 500
+    ramp_steps: 5000
+    # Right: mounting face [.0415,-.003,0] + local +X * (5+25.4) mm.
+    # Link-frame coordinates, NOT an offset from the body's COM.
+    point_offsets: [[0.18, -0.025, 0.0], [0.0719, -0.003, 0.0], [0.0, 0.0, 0.35]]
+observation:
+  command:
+    chip_command: {_target_: mimic_lite.chip_command}
+  policy:
+    chip_history: {_target_: mimic_lite.chip_history, history_length: 10, noise: true}
+  priv:
+    chip_privileged: {_target_: mimic_lite.chip_privileged}
+reward:
+  tracking:
+    root_pos: {_target_: mimic_lite.body_pos_exp, body_names: [torso_link], weight: 0.5, sigma: 0.3}
+    root_ori: {_target_: mimic_lite.body_ori_exp, body_names: [torso_link], weight: 0.5, sigma: 0.4}
+    root_linvel: {_target_: mimic_lite.body_lin_vel_exp, body_names: [torso_link], weight: 0.5, sigma: 1.0}
+    root_angvel: {_target_: mimic_lite.body_ang_vel_exp, body_names: [torso_link], weight: 0.5, sigma: 2.5}
+    # Avoid giving the arms a competing full-joint tracking objective.
+    lower_pos: {_target_: mimic_lite.body_pos_local_exp, body_names: '${task.shared.lower_body_names}', weight: 1.0, sigma: 0.3}
+    lower_ori: {_target_: mimic_lite.body_ori_local_exp, body_names: '${task.shared.lower_body_names}', weight: 1.0, sigma: 0.4}
+    lower_joint_pos: {_target_: mimic_lite.joint_pos_tracking_product, joint_names: '${task.shared.lower_joint_names}', weight: 0.5, sigma: 0.25}
+    lower_joint_vel: {_target_: mimic_lite.joint_vel_tracking_product, joint_names: '${task.shared.lower_joint_names}', weight: 0.5, sigma: 2.5}
+    chip_pos: {_target_: mimic_lite.chip_tracking_reward, weight: 2.0, sigma: 0.10}
+    # Preserve original terms and add separate finer-scale rewards.
+    # Formula: exp(-weighted_mean(error_squared) / sigma**2).
+    chip_pos_precision: {_target_: mimic_lite.chip_tracking_reward, weight: 2.0, sigma: 0.04}
+    chip_pos_fine: {_target_: mimic_lite.chip_tracking_reward, weight: 2.0, sigma: 0.03}
+    chip_ori: {_target_: mimic_lite.chip_tracking_reward, weight: 0.50, sigma: 0.40, orientation: true}
+    chip_ori_precision: {_target_: mimic_lite.chip_tracking_reward, weight: 0.25, sigma: 0.15, orientation: true}
+    chip_ori_fine: {_target_: mimic_lite.chip_tracking_reward, weight: 0.25, sigma: 0.10, orientation: true}
+    # L/R/torso weights: isolate the offset right-hand point, not the wrist origin.
+    chip_right_hand_pos: {_target_: mimic_lite.chip_tracking_reward, weight: 1.0, sigma: 0.03, point_weights: [0, 1, 0]}
+  loco:
+    action_rate_l2: {weight: 0.1, enabled: true}
+    joint_vel_l2: {weight: 1.0e-4, joint_names: .*}
+    joint_pos_limits: {_target_: mimic_lite.joint_pos_limits, weight: 10.0, joint_names: .*, soft_factor: 0.9}
+    self_collisions: {_target_: mimic_lite.self_collisions, weight: -1.0, sensor_name: self_collision, force_threshold: 1.0}
+    survival: {weight: 4.0}
+  chip_metrics:
+    _enabled_: false
+    right_wrist_error: {_target_: mimic_lite.chip_metric, weight: 1.0, enabled: false}
+    right_wrist_force: {_target_: mimic_lite.chip_metric, quantity: right_wrist_force, weight: 1.0, enabled: false}
+    right_wrist_compliance: {_target_: mimic_lite.chip_metric, quantity: right_wrist_compliance, weight: 1.0, enabled: false}
+randomization:
+  perturb_body_mass:
+    pelvis: [0.9, 1.1]
+    torso_link: [0.9, 1.1]
+  perturb_body_com:
+    "pelvis|torso_link": [-0.03, 0.03]
+  motor_params_implicit:
+    stiffness_range: {".*": [0.9, 1.1]}
+    damping_range: {".*": [0.9, 1.1]}
+    armature_range: {".*": [0.75, 1.25]}
+    friction_range: {".*": [0.05, 0.25]}
+  random_joint_offset:
+    .*: [-0.01, 0.01]
