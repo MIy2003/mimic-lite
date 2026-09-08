@@ -175,3 +175,34 @@ MJLab 1.3.0, MuJoCo 3.7.0: six unit tests passed; four-environment smoke
 passed with the task's dynamics randomizations and one finite PPO update.
 The runtime check also verifies a full 0.4 m virtual offset, unchanged nominal
 reward when force is edited, nonzero applied moment, and isolated reset clearing.
+
+### 2026-09-08: current-framework and remote-launch fixes
+
+CHIP components now follow the framework's deferred lifecycle: constructors
+store configuration, `_initialize(env)` binds the environment and allocates
+device tensors, and reset callbacks accept the reset TensorDict. This fixes
+the missing `env` constructor error without changing force/reward semantics.
+`tests/test_chip_lifecycle.py` covers construction and reset signatures.
+
+The CHIP launch scripts default `ANY4HDMI_CACHE_BUILD_NUM_WORKERS=0` to avoid
+the FK-cache loader stall observed with forked workers after CUDA initialization.
+This is a workaround, not a general multiprocessing fix; it does not change GT.
+Direct Python/torchrun launches must set this variable too.
+
+Launchers use `uv run --no-sync`: install the environment and editable project
+packages explicitly before launch, rather than implicitly resynchronizing them
+and potentially removing packages installed outside the environment lockfile.
+Do not copy a virtual environment between machines: its Python links, entry
+points and editable paths may be absolute. Recreate it at the destination,
+refresh project discovery, rerun `prepare_chip_loco.py`, and provision the public
+robot model cache before enabling offline mode. The remote `--locked` check
+failed; `--frozen` was used to restore the existing lockfile, followed by editable
+project installs. This does not mean the lockfile/dependency mismatch is fixed.
+
+Remote validation used Python 3.11.15, PyTorch 2.11.0+cu128, MJLab 1.6.0,
+and MuJoCo/MuJoCo-Warp 3.11.0. The original 9 CHIP tests and 2 lifecycle tests
+passed. Four GPUs x 64 environments completed 50 PPO iterations on four clips;
+one GPU x 4096 environments completed 12 iterations on the full training split.
+The full training-split FK caches were built successfully on the remote machine.
+These supersede the older small-fixture validation limits above, but do not
+establish convergence, real-robot safety, or four-GPU x 8192 feasibility.

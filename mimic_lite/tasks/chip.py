@@ -12,11 +12,15 @@ from .chip_math import ChipSchedule, point_wrench, virtual_target, weighted_trac
 
 
 class ChipTracking(RobotTracking, namespace="mimic_lite"):
-    def __init__(self, env, chip=None, **kwargs):
+    def __init__(self, chip=None, **kwargs):
+        super().__init__(**kwargs)
+        self._chip_cfg = dict(chip or {})
+
+    def _initialize(self, env):
         if env.backend != "mjlab":
             raise ValueError("CHIP currently implements the MJLab external-wrench path only")
-        super().__init__(env, **kwargs)
-        cfg = dict(chip or {})
+        super()._initialize(env)
+        cfg = self._chip_cfg.copy()
         self.chip_body_names = ["left_wrist_yaw_link", "right_wrist_yaw_link", "torso_link"]
         self.chip_body_ids = [self.asset.body_names.index(n) for n in self.chip_body_names]
         self.chip_tracking_ids = [self.tracking_body_names.index(n) for n in self.chip_body_names]
@@ -34,8 +38,8 @@ class ChipTracking(RobotTracking, namespace="mimic_lite"):
         if len(self.chip_leg_ids) != 12:
             raise ValueError("CHIP requires 12 lower-body tracking joints")
 
-    def reset(self, env_ids):
-        super().reset(env_ids)
+    def reset(self, env_ids, reset_td=None):
+        super().reset(env_ids, reset_td)
         self.chip.reset(env_ids)
         self.chip_applied_force[env_ids] = 0
         self.asset.write_external_wrench_to_sim(
@@ -107,15 +111,18 @@ class chip_privileged(Observation, namespace="mimic_lite"):
 
 class chip_history(Observation, namespace="mimic_lite"):
     """Term-major, oldest-to-newest 10-frame history (930 values for G1)."""
-    def __init__(self, env, history_length=10, noise=True):
-        super().__init__(env)
-        self.asset = env.scene.articulations["robot"]
-        self.action = env.action_manager
+    def __init__(self, history_length=10, noise=True):
+        super().__init__()
         self.length = history_length
         self.noise = noise
         if history_length < 1:
             raise ValueError("history_length must be positive")
-        self.buffers = [torch.zeros(self.num_envs, history_length, n, device=self.device)
+
+    def _initialize(self, env):
+        super()._initialize(env)
+        self.asset = env.scene.articulations["robot"]
+        self.action = env.action_manager
+        self.buffers = [torch.zeros(self.num_envs, self.length, n, device=self.device)
                         for n in (3, 3, self.action.action_dim, self.action.action_dim, self.action.action_dim)]
 
     def values(self):
@@ -128,7 +135,7 @@ class chip_history(Observation, namespace="mimic_lite"):
         return [x + torch.empty_like(x).uniform_(-s, s) if self.noise and s else x
                 for x, s in zip(values, scales)]
 
-    def reset(self, env_ids):
+    def reset(self, env_ids, reset_td=None):
         for b, x in zip(self.buffers, self.values()):
             b[env_ids] = x[env_ids, None]
 
@@ -142,13 +149,17 @@ class chip_history(Observation, namespace="mimic_lite"):
 
 
 class chip_tracking_reward(Reward, namespace="mimic_lite"):
-    def __init__(self, env, sigma=0.1, orientation=False, point_weights=(2, 4, 1), **kwargs):
-        super().__init__(env, **kwargs)
+    def __init__(self, sigma=0.1, orientation=False, point_weights=(2, 4, 1), **kwargs):
+        super().__init__(**kwargs)
         if sigma <= 0 or len(point_weights) != 3 or min(point_weights) < 0 or sum(point_weights) <= 0:
             raise ValueError("Invalid CHIP tracking reward parameters")
         self.sigma = sigma
         self.orientation = orientation
-        self.weights = torch.tensor(point_weights, device=self.device)
+        self._point_weights = tuple(point_weights)
+
+    def _initialize(self, env):
+        super()._initialize(env)
+        self.weights = torch.tensor(self._point_weights, device=self.device)
 
     def _compute(self):
         ref_p, ref_q = self.command_manager.chip_reference(reward=True)
@@ -162,8 +173,8 @@ class chip_tracking_reward(Reward, namespace="mimic_lite"):
 
 
 class chip_metric(Reward, namespace="mimic_lite"):
-    def __init__(self, env, quantity="right_wrist_error", **kwargs):
-        super().__init__(env, **kwargs)
+    def __init__(self, quantity="right_wrist_error", **kwargs):
+        super().__init__(**kwargs)
         if quantity not in ("right_wrist_error", "right_wrist_force", "right_wrist_compliance"):
             raise ValueError(quantity)
         self.quantity = quantity
