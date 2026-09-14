@@ -206,3 +206,101 @@ one GPU x 4096 environments completed 12 iterations on the full training split.
 The full training-split FK caches were built successfully on the remote machine.
 These supersede the older small-fixture validation limits above, but do not
 establish convergence, real-robot safety, or four-GPU x 8192 feasibility.
+
+### Replay the trained CHIP controller (2026-09-09)
+
+2026-09-11 rollback: replay defaults are restored to
+`MimicLite/checkpoints/dbiroz1a-18500/checkpoint_18500.pt` and its sibling cfg.yaml.
+The desktop 4k checkpoint is retained for optional comparisons. No controller
+implementation or dependency rollback was needed for this model switch.
+
+Earlier 2026-09-11 comparison used
+`MimicLite/checkpoints/desktop-4000/checkpoint_4000.pt`, copied from the user's
+Desktop. Its sibling `cfg.yaml` was extracted from its embedded training cfg,
+not copied from 18.5k: actor hidden dimensions are [512,512,512] and critic
+dimensions [1024,512,256]. Strict policy loading passed. A 12-second offline
+render on episode `g1_lowstate_20260810_170525` completed its 589-step episode
+with motion_timeout (no pose-error termination), no external force, and summed
+right wrist error 13.3678379 m, giving a mean of 0.0226958 m (2.27 cm).
+Video: `active-adaptation/20260911-125424-f455c2e8.mp4`.
+Older checkpoints remain available via CHIP_CHECKPOINT. This is one replay,
+not proof of improved tracking or real-robot readiness.
+
+Previous default: the resumed 18,500-iteration checkpoint
+at `MimicLite/checkpoints/dbiroz1a-18500/checkpoint_18500.pt`, with its own
+`cfg.yaml`. Both files were SHA256-verified against server 5090. The old 12k
+checkpoint below is retained for comparison. Restart replay to load the new
+weights; an explicitly set `CHIP_CHECKPOINT` takes precedence. This changes
+local simulation replay defaults, not a running real-robot controller.
+
+The completed run `dbiroz1a` (12,000 iterations) is stored locally under
+`MimicLite/checkpoints/dbiroz1a/`, with `checkpoint_12000.pt` and its sibling
+`cfg.yaml`. Keep these files together: the saved configuration supplies the
+policy architecture. Checkpoints are ignored by Git and must be copied separately.
+
+From `MimicLite/active-adaptation`, run:
+
+```bash
+bash projects/mimic-lite/scripts/replay_chip_loco.sh
+# Enable the training-scale random external forces:
+bash projects/mimic-lite/scripts/replay_chip_loco.sh task.command.chip.max_force=20
+# Use the training split instead of held-out validation:
+bash projects/mimic-lite/scripts/replay_chip_loco.sh task=chip_loco_train
+```
+
+For the recorded single episode (from the framework root):
+
+```bash
+bash projects/mimic-lite/scripts/replay_chip_episode.sh \
+  /home/yangmin/data/drag_collection/flip_noft/chip/g1_lowstate_20260810_170525
+```
+
+This converts `chip_motion_50hz.npz` to a local `.cache/chip_episode/` dataset,
+without editing the recording. It reorders joints by name, uses the recorded
+pelvis position/WXYZ quaternion, and checks FK against recorded body positions.
+The episode has 589 frames at 50 Hz (11.76 seconds between first/last frames).
+Its wrist-yaw origins differ from the training XML by 5 mm; reference points
+are regenerated using the training XML and current CHIP point offsets.
+This follows the measured `q_real_smooth` trajectory, not the separate native
+30 Hz three-point commands. `full_motion: true` and `start_from_zero: true`
+select the entire single clip from its start, subject to normal early-failure
+termination/reset. The default model is checkpoint_18500, with zero
+external force. Override `CHIP_CHECKPOINT` to use another local model plus its
+sibling cfg.yaml. The interactive viewer is at http://localhost:8080.
+Conversion and Hydra composition were verified; actual policy rollout on this
+episode has not yet been validated.
+
+`cfg/replay_chip_loco.yaml` runs one simulated robot with the trained policy.
+This is policy-driven tracking, NOT kinematic reference playback
+(`replay_motion: false`). By default it samples validation motion windows,
+starts at the beginning of each sampled window, and disables external force.
+It does not play every full dataset clip sequentially. Compliance sampling and
+dynamics randomization remain inherited from CHIP; this is not a fixed-parameter
+benchmark. Force warmup/ramp are disabled for evaluation; the normal per-environment
+force pulse/wait schedule remains active when `max_force` is nonzero.
+
+The launcher regenerates local dataset paths and defaults to offline robot-cache
+access. Override `CHIP_CHECKPOINT` and `CHIP_LOCO_ROOT` to relocate the model/data.
+The right-hand reference/force point and payload remain those in `chip.yaml`.
+
+Configuration composition was checked locally. The local environment was later
+upgraded to MJLab 1.6.0 and MuJoCo/MuJoCo-Warp 3.11.0 to fix the missing
+`BuiltinPdActuator` import; the full `aa.init()` registration/import path passed.
+Python remains 3.12 and PyTorch remains 2.10, so this is not a complete clone of
+the training environment. Full checkpoint rollout has not yet been verified.
+The launcher uses `--no-sync` and does not automatically upgrade dependencies.
+To reproduce this dependency fix from the framework root:
+
+```bash
+uv pip install --python venv/mjlab/.venv/bin/python \
+  'mjlab==1.6.0' 'mujoco==3.11.0' 'mujoco-warp==3.11.0'
+uv pip check --python venv/mjlab/.venv/bin/python
+```
+
+Known remaining optional-video dependency conflict: MJLab 1.6 requires
+`mjviser>=0.0.14`, which requires Pillow >=12.2, whereas installed MoviePy 2.2.1
+requires Pillow <12. The environment retains Pillow 12.3 for MJLab's viewer;
+`uv pip check` reports this MoviePy conflict. Do not downgrade Pillow below 12
+to hide it, or blindly downgrade MoviePy to an ancient release. The project
+source does not directly import MoviePy; MoviePy-dependent video workflows
+still need a separate compatible environment or a future compatible release.

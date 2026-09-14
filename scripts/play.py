@@ -224,6 +224,7 @@ def main(cfg: DictConfig):
     with (
         env.get_recorder(output_path, enabled=render_enabled) as recorder,
         torch.inference_mode(),
+        VecNorm.freeze(),
         set_exploration_type(ExplorationType.DETERMINISTIC),
         # set_exploration_type(ExplorationType.RANDOM),
     ):

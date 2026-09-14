@@ -1,0 +1,40 @@
+# Policy-driven dataset tracking, NOT kinematic reference playback.
+defaults:
+  - task: chip_loco_val
+  - algo: from_checkpoint
+  - _self_
+
+hydra:
+  run:
+    dir: ./outputs/chip_replay/${now:%Y-%m-%d}/${now:%H-%M-%S}
+
+backend: mjlab
+device: cuda
+headless: false
+seed: 42
+checkpoint_path: ${oc.env:CHIP_CHECKPOINT,../checkpoints/lambda-ik0008iq-20000/checkpoint_20000.pt}
+export_policy: false
+export_only: false
+render_seconds: 0
+camera_follow: true
+app:
+  headless: ${..headless}
+  enable_cameras: false
+
+task:
+  num_envs: 1
+  observation:
+    policy:
+      chip_history:
+        noise: false
+  command:
+    replay_motion: false
+    start_from_zero: true
+    rewind_prob: 0.0
+    chip:
+      # Fix all three compliance values at zero for replay comparisons.
+      compliance_max: [0.0, 0.0, 0.0]
+      # Default: inspect unforced tracking. Override max_force=20 for perturbations.
+      max_force: 0.0
+      warmup_steps: 0
+      ramp_steps: 0
