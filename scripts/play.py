@@ -163,7 +163,8 @@ def export_policy(cfg: DictConfig, env: "_EnvBase", policy) -> None:
     motion_cfg["root_body_name"] = command.root_body_name
     motion_cfg["anchor_body_name"] = command.anchor_body_name
 
-    if hasattr(command, "chip"):
+    three_point_chip = cfg.task.command.get("_target_") == "mimic_lite.ThreePointChipTracking"
+    if hasattr(command, "chip") and not three_point_chip:
         policy_config["chip"] = {
             "compliance_mode": command.chip.compliance_mode,
             "command_dim": 57 if command.chip.compliance_mode == "wrist_axis" else 54,
@@ -173,6 +174,29 @@ def export_policy(cfg: DictConfig, env: "_EnvBase", policy) -> None:
             "point_offsets": command.chip_offsets.cpu().tolist(),
             "compliance_scale": command.chip_compliance_scale,
         }
+
+    if cfg.task.command.get("_target_") == "mimic_lite.ThreePointTracking" or three_point_chip:
+        policy_config["three_point"] = {
+            "format": "mimic_lite_goal_body_three_point_chip_v1" if three_point_chip else "mimic_lite_goal_body_three_point_v1",
+            "point_bodies": command.point_names,
+            "point_offsets": command.point_offsets.cpu().tolist(),
+            "robot_asset": cfg.task.robot.name,
+            "future_steps": command.future_steps.cpu().tolist(),
+            "command_dim": 318 if three_point_chip else 315, "policy_dim": 556, "mask_dim": 3,
+            "frame": "current_pelvis_yaw_ground_origin",
+            "rotation6d": "first_two_rows",
+            "requires_future_targets": True,
+        }
+        if three_point_chip:
+            policy_config["three_point"]["chip"] = {
+                "compliance_mode": "isotropic",
+                "compliance_order": ["pelvis", "left", "right"],
+                "compliance_scale": command.chip_compliance_scale,
+                "command_layout": "315_goal_values_then_3_scaled_compliances",
+                "training_virtual_target": "nominal_minus_current_world_force_times_compliance",
+                "force_point_bodies": command.chip_body_names,
+                "force_point_offsets": command.chip_offsets.cpu().tolist(),
+            }
 
     with open(yaml_path, "w") as f:
         yaml.dump(policy_config, f, sort_keys=False)
@@ -187,6 +211,8 @@ def main(cfg: DictConfig):
 
     from chip_checkpoint import configure_chip_checkpoint
     configure_chip_checkpoint(cfg, restore_mode=True)
+    from three_point_checkpoint import check_three_point_checkpoint
+    check_three_point_checkpoint(cfg)
     aa.init(cfg, auto_rank=True)
 
     from active_adaptation.helpers import make_env_policy

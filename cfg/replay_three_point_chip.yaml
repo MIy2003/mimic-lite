@@ -1,0 +1,13 @@
+defaults:
+  - replay_three_point
+  - override task: three_point_chip
+  - _self_
+
+algo:
+  goal_body_compliance: true
+task:
+  command:
+    chip:
+      # Deterministic no-force/no-compliance replay by default. Override to test.
+      max_force: 0.0
+      compliance_max: [0.0, 0.0, 0.0]

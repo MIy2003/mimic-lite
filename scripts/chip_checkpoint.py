@@ -11,6 +11,8 @@ def configure_chip_checkpoint(cfg, *, restore_mode=False):
     checkpoints are 57D. This does not migrate weights or overwrite evaluation
     force/compliance/fixed-axis overrides.
     """
+    if OmegaConf.select(cfg, "task.command._target_") == "mimic_lite.ThreePointChipTracking":
+        return None  # The 318D Transformer contract has its own validator.
     chip = OmegaConf.select(cfg, "task.command.chip")
     if chip is None or not cfg.get("checkpoint_path"):
         return None
@@ -25,6 +27,8 @@ def configure_chip_checkpoint(cfg, *, restore_mode=False):
     if sidecar is None:
         raise FileNotFoundError(f"CHIP requires cfg.yaml next to {path} to identify its observation contract")
     saved = OmegaConf.load(sidecar)
+    if OmegaConf.select(saved, "algo.goal_body_actor", default=False):
+        raise ValueError("Cannot load a three-point Transformer checkpoint into legacy CHIP")
     if OmegaConf.select(saved, "task.command.chip") is None:
         raise ValueError(f"{sidecar} is not a CHIP checkpoint config")
     saved_mode = OmegaConf.select(saved, "task.command.chip.compliance_mode", default="isotropic")

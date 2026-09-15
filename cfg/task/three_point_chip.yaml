@@ -1,0 +1,48 @@
+# @package task
+defaults:
+  - three_point
+  - _self_
+
+name: G1ThreePointChip
+command:
+  _target_: mimic_lite.ThreePointChipTracking
+  chip:
+    compliance_mode: isotropic
+    # Schedule order: left, right, torso. Actor goals: pelvis, left, right.
+    compliance_max: [0.02, 0.02, 0.0]
+    compliance_scale: 10.0
+    compliance_duration: [100, 200]
+    zero_probability: 0.25
+    max_probability: 0.25
+    sampling_power: 2.0
+    max_force: 20.0
+    force_duration: [50, 100]
+    force_interval: 100
+    body_probabilities: [0.15, 0.75, 0.10]
+    multi_body_probability: 0.10
+    warmup_steps: 500
+    ramp_steps: 5000
+    # Link-frame positions, not COM offsets. Same hardware/payload as CHIP.
+    point_offsets: [[0.18, -0.025, 0.0], [0.0719, -0.003, 0.0], [0.0, 0.0, 0.35]]
+observation:
+  command:
+    three_point_targets:
+      _target_: mimic_lite.three_point_chip_targets
+  priv:
+    three_point_chip_privileged: {_target_: mimic_lite.three_point_chip_privileged}
+reward:
+  tracking:
+    # ADD to the inherited full-body terms; do not change their sigmas/weights.
+    # Nominal reference at the hardware point; exp(-world_error_squared / .03**2).
+    chip_right_hand_pos: {_target_: mimic_lite.three_point_precision_reward, point: 2, sigma: 0.03, weight: 1.0}
+  chip_metrics:
+    # Computed/logged, but excluded from the PPO reward objective.
+    _enabled_: false
+    right_wrist_error: {_target_: mimic_lite.three_point_error, point: 2, weight: 1.0, enabled: false}
+    right_wrist_ori_error: {_target_: mimic_lite.three_point_error, point: 2, orientation: true, weight: 1.0, enabled: false}
+    left_wrist_error: {_target_: mimic_lite.three_point_error, point: 1, weight: 1.0, enabled: false}
+    right_wrist_force: {_target_: mimic_lite.three_point_chip_metric, body: 1, quantity: force, weight: 1.0, enabled: false}
+    left_wrist_force: {_target_: mimic_lite.three_point_chip_metric, body: 0, quantity: force, weight: 1.0, enabled: false}
+    torso_force: {_target_: mimic_lite.three_point_chip_metric, body: 2, quantity: force, weight: 1.0, enabled: false}
+    right_wrist_compliance: {_target_: mimic_lite.three_point_chip_metric, body: 1, quantity: compliance, weight: 1.0, enabled: false}
+    left_wrist_compliance: {_target_: mimic_lite.three_point_chip_metric, body: 0, quantity: compliance, weight: 1.0, enabled: false}

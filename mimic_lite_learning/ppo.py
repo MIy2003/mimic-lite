@@ -53,6 +53,7 @@ from .common import (
     ObsOODDetector,
     check_vecnorm_divergence,
 )
+from .goal_body import GoalBodyActor, GoalBodyFlatActor, LinkCommandMask
 
 
 torch.set_float32_matmul_precision("high")
@@ -185,6 +186,13 @@ class PPOConfig:
     separate_actor_encoder_grad_clip: bool = False
     in_keys: Tuple[str, ...] = (CMD_KEY, OBS_KEY, OBS_PRIV_KEY)
     actor_in_keys: Tuple[str, ...] = (OBS_KEY, CMD_KEY)
+    goal_body_actor: bool = False
+    goal_body_compliance: bool = False
+    goal_body_embed_dim: int = 256
+    goal_body_num_heads: int = 4
+    goal_body_num_layers: int = 3
+    goal_body_ff_dim: int = 1024
+    goal_body_link_mask_key: str = "link_mask"
 
 
     vecnorm: bool = True
@@ -393,7 +401,13 @@ class PPOPolicy(PPOBase):
         critic_in_keys = [OBS_PRIV_KEY, OBS_KEY, CMD_KEY]
 
         self.actor = self._build_actor(actor_in_keys)
+        critic_prefix = []
+        if self.cfg.goal_body_actor:
+            critic_prefix.append(Mod(LinkCommandMask(3, self.cfg.goal_body_compliance),
+                                     [CMD_KEY, self.cfg.goal_body_link_mask_key], ["_goal_command"]))
+            critic_in_keys = [OBS_PRIV_KEY, OBS_KEY, "_goal_command", self.cfg.goal_body_link_mask_key]
         self.critic = Seq(
+            *critic_prefix,
             CatTensors(critic_in_keys, "_critic_input", del_keys=False, sort=False),
             Mod(
                 nn.Sequential(
@@ -435,6 +449,11 @@ class PPOPolicy(PPOBase):
                 nn.init.constant_(module.bias, 0.0)
 
         self.apply(init_)
+        if self.cfg.goal_body_actor:
+            # Restore Transformer projection initialization after legacy MLP init.
+            for module in self.actor.modules():
+                if isinstance(module, GoalBodyActor):
+                    module.reset_parameters()
         if self.cfg.compile_train_modules:
             # Follow PyTorch's supported compile/DDP ordering by compiling the
             # inner modules before DDP wraps them. Module.compile() preserves
@@ -476,6 +495,25 @@ class PPOPolicy(PPOBase):
             )
 
     def _build_actor(self, in_keys: list[str]) -> ProbabilisticActor:
+        if self.cfg.goal_body_actor:
+            if self.cfg.use_actor_encoder or self.cfg.res_actor_hidden_dims:
+                raise ValueError("Goal–Body uses a single whole-body head without the legacy encoder/residual")
+            model = GoalBodyFlatActor(
+                action_dim=self.action_dim, num_links=3,
+                compliance=self.cfg.goal_body_compliance,
+                embed_dim=self.cfg.goal_body_embed_dim, num_heads=self.cfg.goal_body_num_heads,
+                num_layers=self.cfg.goal_body_num_layers, ff_dim=self.cfg.goal_body_ff_dim,
+                init_noise_scale=self.cfg.init_noise_scale,
+            )
+            self.actor_residual_gate = None
+            self.dist_cls, self.dist_keys = IndependentNormal, ["loc", "scale"]
+            actor = ProbabilisticActor(
+                module=Seq(Mod(model, [OBS_KEY, CMD_KEY, self.cfg.goal_body_link_mask_key], ["loc", "scale"])),
+                in_keys=["loc", "scale"], out_keys=[ACTION_KEY],
+                distribution_class=IndependentNormal, return_log_prob=True,
+            ).to(self.device)
+            actor.actor_residual_gate = None
+            return actor
         actor_modules = []
         if self.cfg.use_actor_encoder:
             actor_encoder = nn.Sequential(
@@ -589,7 +627,8 @@ class PPOPolicy(PPOBase):
             if key not in observation_spec.keys(True, True):
                 continue
             shape = observation_spec[key].shape[-1:]
-            vecnorm = vecnorm_cls(input_shape=shape, stats_shape=shape, decay=0.9999)
+            key_cls = NullVecNorm if self.cfg.goal_body_actor and key == self.cfg.goal_body_link_mask_key else vecnorm_cls
+            vecnorm = key_cls(input_shape=shape, stats_shape=shape, decay=0.9999)
             self.vecnorms[key] = vecnorm
             modules.append(Mod(vecnorm, [key], [key]))
 
@@ -773,6 +812,8 @@ class PPOPolicy(PPOBase):
 
                 if self.cfg.vecnorm is not None:
                     for name, vecnorm in self.vecnorms.items():
+                        if isinstance(vecnorm, NullVecNorm):
+                            continue
                         loc_diffs, scale_diffs = check_vecnorm_divergence(vecnorm)
                         if aa.is_main_process():
                             info[f"vecnorm/{name}/loc_diff_max"] = max(loc_diffs)
@@ -800,6 +841,10 @@ class PPOPolicy(PPOBase):
 
     def _get_actor_std(self, actor_module):
         module = actor_module.module if isinstance(actor_module, DDP) else actor_module
+        if self.cfg.goal_body_actor:
+            for child in module.modules():
+                if isinstance(child, GoalBodyActor):
+                    return child.action_std.detach()
         for _, param in module.named_parameters():
             if param.ndim == 1 and param.shape[0] == self.action_dim:
                 return param.detach()

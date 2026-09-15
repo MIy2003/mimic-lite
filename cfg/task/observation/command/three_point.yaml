@@ -1,0 +1,5 @@
+# @package task.observation.command
+three_point_targets:
+  _target_: mimic_lite.three_point_targets
+  position_noise_std: 0.005
+  orientation_noise_std: 0.05

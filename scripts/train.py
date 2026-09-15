@@ -43,6 +43,8 @@ def main(cfg: DictConfig):
 
     from chip_checkpoint import configure_chip_checkpoint
     configure_chip_checkpoint(cfg)
+    from three_point_checkpoint import check_three_point_checkpoint
+    check_three_point_checkpoint(cfg)
     aa.init(cfg, auto_rank=True)
 
     print(

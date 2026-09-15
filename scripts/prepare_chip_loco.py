@@ -1,5 +1,6 @@
 """Validate portable splits and generate CHIP task configs without editing source data."""
 import argparse
+import copy
 import json
 from pathlib import Path
 
@@ -11,12 +12,27 @@ POOLS = ("core_motiondecode", "core_sonic", "support_motiondecode", "support_son
 SPLIT_DIR = "physical_rollout_inherited_family_80_10_10_seed20260828_v1"
 
 
+def load_task_template(name):
+    if name == "three_point_chip":
+        # Flatten inheritance BEFORE replacing motion_cfgs, otherwise the base
+        # task's default motion pool is silently merged into the four real pools.
+        from hydra import compose, initialize_config_dir
+        from omegaconf import OmegaConf
+        with initialize_config_dir(config_dir=str(PROJECT / "cfg"), version_base=None):
+            cfg = compose(config_name="task/three_point_chip")
+        return OmegaConf.to_container(cfg.task, resolve=False)
+    return yaml.safe_load((PROJECT / f"cfg/task/{name}.yaml").read_text())
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--root", type=Path, default=FRAMEWORK.parent / "loco_manip_physical_rollout_accepted_v1")
-    parser.add_argument("--output", type=Path, default=FRAMEWORK / ".cache/chip_loco")
+    parser.add_argument("--output", type=Path)
+    parser.add_argument("--task-template", choices=("chip", "three_point", "three_point_chip"), default="chip")
     args = parser.parse_args()
-    root, output = args.root.resolve(), args.output.resolve()
+    template = load_task_template(args.task_template)
+    root = args.root.resolve()
+    output = (args.output or FRAMEWORK / f".cache/{args.task_template}_loco").resolve()
     splits, all_paths = {}, set()
     for split in ("train", "val", "test"):
         grouped = {pool: [] for pool in POOLS}
@@ -54,8 +70,8 @@ def main():
     for split, grouped in splits.items():
         report["splits"][split] = {pool: len(entries) for pool, entries in grouped.items()}
         for smoke in (False, True):
-            name = f"chip_loco_{split}" + ("_smoke" if smoke else "")
-            cfg = yaml.safe_load((PROJECT / "cfg/task/chip.yaml").read_text())
+            name = f"{args.task_template}_loco_{split}" + ("_smoke" if smoke else "")
+            cfg = copy.deepcopy(template)
             cfg["name"] = name
             cfg["command"]["motion_cfgs"] = {}
             for pool, entries in grouped.items():
@@ -64,13 +80,15 @@ def main():
                 listing.write_text("\n".join(selected) + "\n")
                 cfg["command"]["motion_cfgs"][pool] = {
                     "path": str(root / "pools" / pool), "filenames_path": str(listing),
-                    # Pool selection proportional to clip count; no arbitrary core/support bias.
-                    "weight": len(entries), "full_motion": False,
+                    # CHIP keeps clip-count weights; Goal–Body keeps its source physical-pool recipe.
+                    "weight": (dict(zip(POOLS, (.4, .4, .04, .16)))[pool]
+                               if args.task_template.startswith("three_point") else len(entries)),
+                    "full_motion": False,
                 }
             (output / "task" / f"{name}.yaml").write_text("# @package task\n" + yaml.safe_dump(cfg, sort_keys=False))
     (output / "report.json").write_text(json.dumps(report, indent=2) + "\n")
     print(json.dumps(report, indent=2))
-    print(f"Generated configs: {output}/task (rerun after changing chip.yaml)")
+    print(f"Generated configs: {output}/task (rerun after changing {args.task_template}.yaml)")
 
 
 if __name__ == "__main__":

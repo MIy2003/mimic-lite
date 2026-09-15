@@ -1,0 +1,37 @@
+defaults:
+  - train
+  - override task: three_point
+  - _self_
+
+total_iters: 4000
+checkpoint_path: null
+exp_name: three-point-transformer
+wandb:
+  mode: offline
+
+algo:
+  goal_body_actor: true
+  in_keys: [command, policy, priv, link_mask]
+  goal_body_link_mask_key: link_mask
+  goal_body_embed_dim: 256
+  goal_body_num_heads: 4
+  goal_body_num_layers: 3
+  goal_body_ff_dim: 1024
+  critic_hidden_dims: [1024, 512, 256]
+  train_every: 32
+  ppo_epochs: 3
+  num_minibatches: 8
+  clip_param: 0.2
+  gamma: 0.99
+  lmbda: 0.95
+  lr: 3.0e-4
+  desired_kl: 0.01
+  desired_kl_end: 0.01
+  tail_kl_lr_control: false
+  opt: muon
+  entropy_coef_start: 0.012
+  entropy_coef_end: 0.001
+  # Current PPO uses fractions of the run, not absolute iterations.
+  entropy_decay_start: 0.8125
+  entropy_decay_end: 0.875
+  max_grad_norm: 1.0

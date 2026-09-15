@@ -1,0 +1,27 @@
+defaults:
+  - train_three_point
+  - _self_
+
+headless: false
+app:
+  headless: false
+checkpoint_path: ${oc.env:THREE_POINT_CHECKPOINT,null}
+export_policy: false
+export_only: false
+render_seconds: 0
+camera_follow: true
+# Interpolation replaces the inherited mapping; a literal {} would merge it.
+replay_randomization: {}
+task:
+  num_envs: 1
+  randomization: ${replay_randomization}
+  command:
+    start_from_zero: true
+    rewind_prob: 0.0
+    init_joint_pos_noise: 0.0
+    init_joint_vel_noise: 0.0
+  observation:
+    command:
+      three_point_targets:
+        position_noise_std: 0.0
+        orientation_noise_std: 0.0
