@@ -23,6 +23,10 @@ from active_adaptation.utils.export import export_onnx
 def main(cfg: DictConfig):
     OmegaConf.resolve(cfg)
     OmegaConf.set_struct(cfg, False)
+    from chip_checkpoint import configure_chip_checkpoint
+    training_cfg = configure_chip_checkpoint(cfg, restore_mode=True)
+    if training_cfg is None:
+        raise ValueError("Export requires a trained CHIP checkpoint")
     # Export nominal robot parameters, not a random instance of the robot.
     cfg.task.randomization = {}
     aa.init(cfg, auto_rank=True)
@@ -37,7 +41,6 @@ def main(cfg: DictConfig):
         export_onnx(actor, fake, str(output / "policy.onnx"))
     a = env.base_env.action_manager
     c = env.base_env.command_manager
-    training_cfg = OmegaConf.load(Path(cfg.checkpoint_path).resolve().parent / "cfg.yaml")
     names = list(a.joint_names)
     joint_kp, joint_kd = [], []
     for name in names:
@@ -48,7 +51,8 @@ def main(cfg: DictConfig):
         joint_kp.append(float(matches[0].stiffness))
         joint_kd.append(float(matches[0].damping))
     contract = {
-        "format": "mimic_lite_chip_v1", "checkpoint": str(Path(cfg.checkpoint_path).resolve()),
+        "format": "mimic_lite_chip_v2" if c.chip.compliance_mode == "wrist_axis" else "mimic_lite_chip_v1",
+        "checkpoint": str(Path(cfg.checkpoint_path).resolve()),
         "checkpoint_sha256": hashlib.sha256(Path(cfg.checkpoint_path).read_bytes()).hexdigest(),
         "policy_joint_names": names,
         "lower_joint_names": [c.tracking_joint_names[i] for i in c.chip_leg_ids],
@@ -62,7 +66,13 @@ def main(cfg: DictConfig):
         "point_bodies":c.chip_body_names, "point_offsets":c.chip_offsets.cpu().tolist(),
         "compliance_scale":c.chip_compliance_scale,
         "physical_compliance_max":list(training_cfg.task.command.chip.compliance_max),
-        "inputs":{"policy":[1,930],"command":[1,54]}, "output":"action",
+        "inputs":{key: [1, *fake[key].shape[1:]] for key in ("policy", "command")}, "output":"action",
+        "compliance_mode": c.chip.compliance_mode,
+        "stiffness_axis": ({"command_slice": [54, 57], "frame": "current_point_link",
+                            "shared_local_xyz": True, "unit_vector": True, "scale": 1.0,
+                            "point_frames": c.chip_body_names,
+                            "meaning": "compliant along axis, resist perpendicular disturbances"}
+                           if c.chip.compliance_mode == "wrist_axis" else None),
         "normalization":"frozen VecNorm embedded in ONNX",
     }
     model = onnx.load(output / "policy.onnx", load_external_data=True)

@@ -17,6 +17,8 @@ from active_adaptation.learning.modules.vecnorm import VecNorm
 def main(cfg: DictConfig):
     OmegaConf.resolve(cfg)
     OmegaConf.set_struct(cfg, False)
+    from chip_checkpoint import configure_chip_checkpoint
+    configure_chip_checkpoint(cfg, restore_mode=True)
     aa.init(cfg, auto_rank=True)
     # Seed before construction too: mass/CoM randomization runs at startup.
     torch.manual_seed(cfg.seed)
@@ -48,6 +50,9 @@ def main(cfg: DictConfig):
             record("command", carry["command"])
             record("compliance", command.chip.compliance)
             record("force", command.chip.force)
+            if command.chip.compliance_mode == "wrist_axis":
+                record("stiffness_axis", command.chip.stiffness_axis)
+                record("stiffness_axis_world", command.chip_axis_world())
             ref, _ = command.chip_reference()
             actual, _ = command.chip_actual()
             record("point_error", (actual-ref).norm(dim=-1))

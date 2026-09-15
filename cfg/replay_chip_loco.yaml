@@ -32,6 +32,9 @@ task:
     start_from_zero: true
     rewind_prob: 0.0
     chip:
+      # Replay/export restore compliance_mode from checkpoint's cfg.yaml.
+      # Fixed local +X for v2 wrist_axis checkpoints; ignored by legacy v1.
+      fixed_stiffness_axis: [1.0, 0.0, 0.0]
       # Fix all three compliance values at zero for replay comparisons.
       compliance_max: [0.0, 0.0, 0.0]
       # Default: inspect unforced tracking. Override max_force=20 for perturbations.

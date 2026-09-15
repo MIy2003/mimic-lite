@@ -8,7 +8,7 @@ from active_adaptation.utils.math import (
     quat_conjugate, quat_mul, matrix_from_quat,
 )
 from .command import RobotTracking
-from .chip_math import ChipSchedule, point_wrench, virtual_target, weighted_tracking
+from .chip_math import ChipSchedule, point_wrench, project_force, virtual_target, weighted_tracking
 
 
 class ChipTracking(RobotTracking, namespace="mimic_lite"):
@@ -33,6 +33,7 @@ class ChipTracking(RobotTracking, namespace="mimic_lite"):
             raise ValueError("compliance_scale must be positive")
         self.chip = ChipSchedule(self.num_envs, self.device, **cfg)
         self.chip_applied_force = torch.zeros_like(self.chip.force)
+        self.chip_applied_axis = torch.zeros_like(self.chip.force)
         self.chip_leg_ids = [i for i, n in enumerate(self.tracking_joint_names)
                              if any(s in n for s in ("hip_", "knee_", "ankle_"))]
         if len(self.chip_leg_ids) != 12:
@@ -42,6 +43,7 @@ class ChipTracking(RobotTracking, namespace="mimic_lite"):
         super().reset(env_ids, reset_td)
         self.chip.reset(env_ids)
         self.chip_applied_force[env_ids] = 0
+        self.chip_applied_axis[env_ids] = 0
         self.asset.write_external_wrench_to_sim(
             self.chip.force[env_ids], torch.zeros_like(self.chip.force[env_ids]),
             env_ids=env_ids, body_ids=self.chip_body_ids)
@@ -59,6 +61,15 @@ class ChipTracking(RobotTracking, namespace="mimic_lite"):
         force, torque = point_wrench(self.chip.force, point, com)
         self.asset.write_external_wrench_to_sim(force, torque, body_ids=self.chip_body_ids)
         self.chip_applied_force.copy_(force)
+        self.chip_applied_axis.copy_(self.chip_axis_world())
+
+    def chip_axis_world(self):
+        """Shared local xyz rotated by each actual link, not reference/COM frames.
+
+        The third point uses torso_link's frame; its default compliance is zero.
+        """
+        q = self.asset.data.body_link_quat_w[:, self.chip_body_ids]
+        return quat_apply(q, self.chip.stiffness_axis[:, None].expand(-1, 3, -1))
 
     def chip_reference(self, reward=False):
         k = self.reward_current_step_index if reward else self.obs_current_step_index
@@ -86,27 +97,35 @@ class ChipTracking(RobotTracking, namespace="mimic_lite"):
 
 
 class chip_command(Observation, namespace="mimic_lite"):
-    """54 values: 12 q + 12 dq, 9 virtual xyz, 12 wxyz, 6 anchor, 3 scaled c."""
+    """54 legacy values; wrist_axis appends 3 unscaled, shared local-axis values."""
     def compute(self):
         c = self.command_manager
         pos, orn = c.chip_reference()
         aq = c.asset.data.body_link_quat_w[:, c.anchor_body_idx_asset]
-        pos = virtual_target(pos, c.chip.force, c.chip.compliance, aq)
+        directional = c.chip.compliance_mode == "wrist_axis"
+        pos = virtual_target(pos, c.chip.force, c.chip.compliance, aq,
+                             c.chip_axis_world() if directional else None)
         k = c.obs_current_step_index
         anchor = quat_mul(quat_conjugate(aq), c.ref_anchor_quat_future_w[:, k])
-        return torch.cat((c.ref_joint_pos_future_[:, k, c.chip_leg_ids],
-                          c.ref_joint_vel_future_[:, k, c.chip_leg_ids],
-                          pos.flatten(1), orn.flatten(1),
-                          matrix_from_quat(anchor)[..., :2].flatten(1),
-                          c.chip.compliance * c.chip_compliance_scale), dim=-1)
+        values = (c.ref_joint_pos_future_[:, k, c.chip_leg_ids],
+                  c.ref_joint_vel_future_[:, k, c.chip_leg_ids],
+                  pos.flatten(1), orn.flatten(1),
+                  matrix_from_quat(anchor)[..., :2].flatten(1),
+                  c.chip.compliance * c.chip_compliance_scale)
+        if directional:
+            values += (c.chip.stiffness_axis,)
+        return torch.cat(values, dim=-1)
 
 
 class chip_privileged(Observation, namespace="mimic_lite"):
     def compute(self):
         c = self.command_manager
         pos, orn = c.chip_reference()
-        return torch.cat((pos.flatten(1), orn.flatten(1), c.chip.force.flatten(1),
-                          c.chip.compliance * c.chip_compliance_scale), dim=-1)
+        values = (pos.flatten(1), orn.flatten(1), c.chip.force.flatten(1),
+                  c.chip.compliance * c.chip_compliance_scale)
+        if c.chip.compliance_mode == "wrist_axis":
+            values += (c.chip.stiffness_axis,)
+        return torch.cat(values, dim=-1)
 
 
 class chip_history(Observation, namespace="mimic_lite"):
@@ -175,7 +194,9 @@ class chip_tracking_reward(Reward, namespace="mimic_lite"):
 class chip_metric(Reward, namespace="mimic_lite"):
     def __init__(self, quantity="right_wrist_error", **kwargs):
         super().__init__(**kwargs)
-        if quantity not in ("right_wrist_error", "right_wrist_force", "right_wrist_compliance"):
+        if quantity not in ("right_wrist_error", "right_wrist_force", "right_wrist_compliance",
+                            "right_wrist_force_parallel", "right_wrist_force_perpendicular",
+                            "right_wrist_error_parallel", "right_wrist_error_perpendicular"):
             raise ValueError(quantity)
         self.quantity = quantity
 
@@ -185,6 +206,17 @@ class chip_metric(Reward, namespace="mimic_lite"):
             return c.chip_applied_force[:, 1].norm(dim=-1, keepdim=True)
         if self.quantity == "right_wrist_compliance":
             return c.chip.compliance[:, 1:2]
+        if self.quantity.startswith("right_wrist_force_"):
+            force = c.chip_applied_force[:, 1]
+            parallel = project_force(force, c.chip_applied_axis[:, 1])
+            value = parallel if self.quantity == "right_wrist_force_parallel" else force - parallel
+            return value.norm(dim=-1, keepdim=True)
         ref_p, _ = c.chip_reference(reward=True)
         p, _ = c.chip_actual()
-        return (p[:, 1] - ref_p[:, 1]).norm(dim=-1, keepdim=True)
+        error = p[:, 1] - ref_p[:, 1]
+        if self.quantity != "right_wrist_error":
+            aq = c.asset.data.body_link_quat_w[:, c.anchor_body_idx_asset]
+            axis_local = quat_apply_inverse(aq, c.chip_applied_axis[:, 1])
+            parallel = project_force(error, axis_local)
+            error = parallel if self.quantity == "right_wrist_error_parallel" else error - parallel
+        return error.norm(dim=-1, keepdim=True)

@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-#SBATCH --job-name=mimiclite-chip
+#SBATCH --job-name=mimiclite-chip-axis
 #SBATCH --nodes=1
 #SBATCH --ntasks=1
 #SBATCH --time=2-00:00:00
@@ -34,8 +34,9 @@ exec srun --ntasks=1 --kill-on-bad-exit=1 \
   torchrun --standalone --nnodes=1 --nproc-per-node=4 \
   projects/mimic-lite/scripts/train.py \
   --config-dir "$PWD/.cache/chip_loco" task=chip_loco_train backend=mjlab \
+  task.command.chip.compliance_mode=wrist_axis \
   task.num_envs=16384 total_iters=30000 checkpoint_path=null \
   wandb.mode=offline wandb.id=null \
-  "exp_name=chip-lambda-16384x4-30000-${SLURM_JOB_ID}" \
+  "exp_name=chip-axis-lambda-16384x4-30000-${SLURM_JOB_ID}" \
   "hydra.run.dir=$WANDB_DIR/output" checkpoint_interval=500 upload_interval=500 \
   2>&1 | tee "$WANDB_DIR/train.log"

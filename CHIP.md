@@ -9,7 +9,7 @@ The integration repository's other `mimic-lite/` checkout is independent.
 BM/CHIP Precision three-point mechanism, with the requested changes:
 
 - Physical compliance: left/right wrist `[0, 0.02] m/N`, torso zero.
-- **No displacement clipping.** At 20 N and 0.02 m/N the virtual displacement
+- **No displacement clipping.** At 20 N along the axis and 0.02 m/N the virtual displacement
   is 0.4 m. This is a target displacement, not a guarantee of physical motion.
 - Actor compliance input is `10*c`, so its range is `[0, 0.2]`, not the old
   BM range `[0, 0.5]`. Zero is nominal tracking, not infinite physical stiffness.
@@ -29,8 +29,23 @@ BM/CHIP Precision three-point mechanism, with the requested changes:
   force only for reset environments, resamples their schedules, and preserves
   the global curriculum. This avoids stale-force/reset leakage.
 
-For reference point position `p_ref_local`, actor position is
-`p_ref_local - R_robot_anchor.T @ (c * F_world)`. The reference uses its own full
+The default is now `compliance_mode: wrist_axis` (v2). For each point, rotate the
+shared unit vector `u_local` by its **actual current link orientation**:
+`u_world = R_point_link @ u_local`. The two wrists interpret the same three
+numbers in their respective `left_wrist_yaw_link` / `right_wrist_yaw_link` frames,
+so their world axes can differ. This is NOT a reference-wrist, pelvis, or COM
+inertial-frame axis. Torso uses torso_link's frame but its default c is zero.
+
+Only `F_parallel = dot(F_world, u_world) * u_world` enters the virtual target:
+`p_ref_local - R_robot_anchor.T @ (c * F_parallel)`.
+The legacy `compliance_mode: isotropic` instead uses all of `F_world`.
+Both modes physically apply **all of F_world**, including perpendicular force;
+neither the applied force nor its lever-arm torque is projected. Rewards still
+track the unmodified reference. Perpendicular force thus trains disturbance
+rejection, not compliant displacement. Zero target displacement is not a
+guarantee of zero real motion or infinite stiffness. Rotation rewards are unchanged.
+
+The reference uses its own full
 pelvis orientation, matching BM's convention rather than MimicLite yaw-only
 coordinates. Reference and measured points use local link offsets:
 left wrist `[.18,-.025,0]`, right wrist `[.0719,-.003,0]`, torso `[0,0,.35]` meters.
@@ -64,16 +79,112 @@ MimicLite PPO concatenates `policy` then `command`:
 - `policy`: 930 values, term-major gravity/angular velocity/joint position/
   joint velocity/previous raw policy action, 10 frames **oldest to newest**.
   Joint order follows MimicLite's simulation action order.
-- `command`: 54 values: 12 lower-body q, 12 lower-body dq, 9 virtual point xyz,
+- `command`: 57 values in wrist_axis, 54 in legacy isotropic: 12 lower-body q,
+  12 lower-body dq, 9 virtual point xyz,
   12 reference point quaternions (wxyz), 6 robot-to-reference anchor rotation
-  matrix entries (`matrix[..., :2].flatten()`), 3 scaled compliance values.
+  matrix entries (`matrix[..., :2].flatten()`), 3 scaled compliance values,
+  then **3 unscaled local unit-axis values** (`command[54:57]`) in wrist_axis only.
 
-This totals 984 values and produces 29 actions. **It is not binary compatible
+This totals **987** values (legacy: 984) and produces 29 actions. The CHIP-only
+privileged term also appends the same three axis values (33 to 36 values);
+the critic retains full, unprojected external force. **It is not binary compatible
 with a BM checkpoint or deployment observation vector**, despite equal size.
 MimicLite action scales/delay/filter, model, PPO, and normalization are retained.
 Neither raw force nor unshifted upper-body reference joints are actor inputs.
 CHIP has no extra action-delta limiter. Ordinary simulator joint/actuator limits
 and action smoothing still apply.
+
+## Wrist-axis sampling and checkpoint compatibility (v2)
+
+The name `stiffness_axis` means **soft along the axis, stiff perpendicular to it**.
+It is an unoriented axis: u and -u yield the same projector, and negative axial
+force is preserved (no rectification). Random sampling covers the +X hemisphere;
+it does not need duplicate samples of the opposite hemisphere.
+
+| Probability | Angle from wrist-local +X |
+| --- | --- |
+| 20% | exactly [1,0,0] |
+| 60% | 0 to 30 degrees |
+| 15% | 30 to 60 degrees |
+| 5% | 60 to 90 degrees |
+
+Within each band sample cos(theta) uniformly between the band cosines and phi
+uniformly in [0, 2*pi); output [cos(theta), sin(theta)*cos(phi), sin(theta)*sin(phi)].
+This is uniform solid angle within each band, not uniform Euler angles. The
+probabilities are an initial task-specific choice, not paper defaults or an
+empirically optimal distribution.
+
+Axes are sampled on reset and at the start of each new force cycle when force
+is zero, then held in the **wrist frame** through the pulse/wait cycle (150–199
+steps by default). World axes still rotate with the robot. Compliance resampling
+does not resample axes. Physical force direction stays world-isotropic and
+independent of the axis; amplitude, body selection, c sampling and curriculum
+remain unchanged.
+
+Configuration in `cfg/task/chip.yaml`:
+
+```yaml
+compliance_mode: wrist_axis
+axis_probabilities: [0.20, 0.60, 0.15, 0.05]
+axis_cone_degrees: [30.0, 60.0, 90.0]
+fixed_stiffness_axis: null  # random; [1,0,0] fixes each wrist's local +X
+```
+
+Fixed axes are normalized; zero/nonfinite vectors are rejected. To use different
+LOCAL axes for the two hands would require an expanded interface; this version
+shares three local numbers and does not sample each hand's local axis independently.
+
+New training uses wrist_axis by default; **start with checkpoint_path=null**.
+The local scripts do not migrate old weights to the larger input. A cross-mode
+resume fails before constructing the simulator. To intentionally resume a legacy
+checkpoint, set `task.command.chip.compliance_mode=isotropic`.
+
+Replay, diagnostics, validation and export read the checkpoint's sibling cfg.yaml
+to restore its mode; a missing mode means legacy isotropic. Thus old checkpoints
+remain 54D even though chip.yaml now defaults to 57D. Keep cfg.yaml with each
+checkpoint. Replay fixes the axis at local +X by default; override
+`task.command.chip.fixed_stiffness_axis=null` for random axes on a v2 checkpoint.
+Re-run `prepare_chip_loco.py` / `prepare_chip_episode.py` to refresh generated
+task YAMLs after this change; motion data and FK need no conversion. The loco
+training launcher already refreshes its task configs.
+
+`export_chip_deploy.py` emits `mimic_lite_chip_v2` for the new interface, measured
+input dimensions and axis-frame metadata. **The existing external v1 deployment
+adapter is not upgraded or replaced by this change.** Do not substitute a 57D
+model into a 54D adapter. `validate_chip_deploy.py` explicitly rejects v2 until
+that adapter is updated. No extra force input is added to the actor.
+
+New diagnostic metrics: `right_wrist_force_parallel/perpendicular` (N) and
+`right_wrist_error_parallel/perpendicular` (m). They use the last applied axis
+to avoid attributing the prior transition to a newly sampled axis. Errors remain
+relative to the original reference, not an identified real-world compliance.
+Like existing CHIP metrics, raw episode stats accumulate values: divide by
+episode_len to obtain an episode mean. Metrics have no reward contribution.
+
+### Reproducible checks
+
+From the framework root, with its MJLab environment:
+
+```bash
+venv/mjlab/.venv/bin/python -m unittest discover -s projects/mimic-lite/tests -p 'test_chip*.py'
+venv/mjlab/.venv/bin/python projects/mimic-lite/scripts/smoke_chip.py --mode wrist_axis
+venv/mjlab/.venv/bin/python projects/mimic-lite/scripts/smoke_chip.py --mode isotropic
+```
+
+The bounded four-environment smoke checks finite observations/rewards, 57D/54D
+commands, full physical wrench (including perpendicular forces and substep
+reapplication), unclipped virtual targets, unchanged tracking rewards, partial
+reset isolation and one PPO update. This is an integration check, not evidence
+that an untrained policy has learned directional compliance.
+
+Local validation (2026-09-14, RTX 4090): 23 unittest checks and two lifecycle
+checks passed; both wrist_axis and legacy isotropic four-env smoke runs passed,
+including one PPO update each. With seed 417 and 50,000 sampled axes, the four
+bands contained 20.226%, 59.806%, 14.886%, 5.082%, respectively. Logs are under
+`active-adaptation/records/chip_axis/`. The first smoke attempt exposed the old
+test harness's tensor-only reward check; it was updated to handle the current
+TensorDict reward groups before both integration runs passed. No full training,
+trained v2 quality evaluation, or real-robot deployment was performed.
 
 CHIP now uses `g1-mode_15-chip-payload`: the original mode-15 geometry plus
 two added point masses on right_wrist_yaw_link. The URDF right_hand_palm_joint

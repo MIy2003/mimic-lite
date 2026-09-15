@@ -68,6 +68,13 @@ command:
   rewind_prob: 0.8
   rewind_steps_range: [25, 125]
   chip:
+    # Shared unit xyz in each CURRENT wrist link frame, not pelvis or COM frame.
+    # New command is 57D. Use isotropic for legacy 54D checkpoints.
+    compliance_mode: wrist_axis
+    axis_probabilities: [0.20, 0.60, 0.15, 0.05]
+    axis_cone_degrees: [30.0, 60.0, 90.0]
+    # null: resample at reset/new force cycle; [1,0,0]: fixed local +X.
+    fixed_stiffness_axis: null
     # Physical units m/N. No displacement clipping, including at c=0.02.
     compliance_max: [0.02, 0.02, 0.0]
     compliance_scale: 10.0
@@ -124,6 +131,10 @@ reward:
     right_wrist_error: {_target_: mimic_lite.chip_metric, weight: 1.0, enabled: false}
     right_wrist_force: {_target_: mimic_lite.chip_metric, quantity: right_wrist_force, weight: 1.0, enabled: false}
     right_wrist_compliance: {_target_: mimic_lite.chip_metric, quantity: right_wrist_compliance, weight: 1.0, enabled: false}
+    right_wrist_force_parallel: {_target_: mimic_lite.chip_metric, quantity: right_wrist_force_parallel, weight: 1.0, enabled: false}
+    right_wrist_force_perpendicular: {_target_: mimic_lite.chip_metric, quantity: right_wrist_force_perpendicular, weight: 1.0, enabled: false}
+    right_wrist_error_parallel: {_target_: mimic_lite.chip_metric, quantity: right_wrist_error_parallel, weight: 1.0, enabled: false}
+    right_wrist_error_perpendicular: {_target_: mimic_lite.chip_metric, quantity: right_wrist_error_perpendicular, weight: 1.0, enabled: false}
 randomization:
   perturb_body_mass:
     pelvis: [0.9, 1.1]

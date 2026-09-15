@@ -17,6 +17,8 @@ from active_adaptation.learning.modules.vecnorm import VecNorm
 def main(cfg: DictConfig):
     OmegaConf.resolve(cfg)
     OmegaConf.set_struct(cfg, False)
+    from chip_checkpoint import configure_chip_checkpoint
+    configure_chip_checkpoint(cfg, restore_mode=True)
     for motion in cfg.task.command.motion_cfgs.values():
         motion.full_motion = True
     cfg.task.command.start_from_zero = True

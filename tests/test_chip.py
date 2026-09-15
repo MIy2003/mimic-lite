@@ -28,6 +28,78 @@ class ChipTests(unittest.TestCase):
         out = chip.virtual_target(torch.zeros_like(f), f, torch.ones(1, 3) * .02, q)
         torch.testing.assert_close(out, torch.tensor([[[0., .1, 0]]]).expand_as(out), atol=1e-6, rtol=1e-6)
 
+    def test_axis_projection_signed_orthogonal_and_unclipped(self):
+        f = torch.tensor([[[20., 0, 0], [0, 12., 0], [-3., 4., 0]]])
+        original = f.clone()
+        axis = torch.tensor([[[1., 0, 0]]]).expand_as(f)
+        q = torch.tensor([[1., 0, 0, 0]])
+        c = torch.full((1, 3), .02)
+        out = chip.virtual_target(torch.zeros_like(f), f, c, q, axis)
+        torch.testing.assert_close(out, torch.tensor([[[-.4, 0, 0], [0, 0, 0], [.06, 0, 0]]]))
+        torch.testing.assert_close(out, chip.virtual_target(torch.zeros_like(f), f, c, q, -axis))
+        torch.testing.assert_close(f, original)
+        torch.testing.assert_close(chip.virtual_target(torch.zeros_like(f), f, c*0, q, axis), torch.zeros_like(f))
+
+    def test_distinct_world_wrist_axes_and_rotated_anchor(self):
+        # Same local +X: left wrist points world +X, right wrist world +Y.
+        f = torch.tensor([[[3., 4, 0]]]).expand(1, 3, 3)
+        axes = torch.tensor([[[1., 0, 0], [0, 1., 0], [0, 0, 1.]]])
+        q = torch.tensor([[2**-.5, 0, 0, 2**-.5]])
+        out = chip.virtual_target(torch.zeros_like(f), f, torch.full((1, 3), .02), q, axes)
+        torch.testing.assert_close(out, torch.tensor([[[0., .06, 0], [-.08, 0, 0], [0, 0, 0]]]), atol=1e-6, rtol=1e-6)
+
+    def test_axis_distribution(self):
+        torch.manual_seed(417)
+        s = chip.ChipSchedule(50000, "cpu", compliance_mode="wrist_axis")
+        axis = s.stiffness_axis
+        torch.testing.assert_close(axis.norm(dim=-1), torch.ones(len(axis)), atol=2e-6, rtol=1e-6)
+        self.assertTrue((axis[:, 0] >= 0).all())
+        x = axis[:, 0]
+        exact = x == 1
+        bands = [exact, (~exact) & (x >= 3**.5/2), (x < 3**.5/2) & (x >= .5), x < .5]
+        for mask, expected in zip(bands, (.20, .60, .15, .05)):
+            self.assertAlmostEqual(mask.float().mean().item(), expected, delta=.008)
+        # Cos(theta) is uniform inside each band; Y/Z azimuth is symmetric.
+        for mask, expected in zip(bands[1:], ((1+3**.5/2)/2, (3**.5/2+.5)/2, .25)):
+            self.assertAlmostEqual(x[mask].mean().item(), expected, delta=.01)
+        self.assertLess(axis[:, 1:].mean(0).abs().max().item(), .008)
+        # Physical forces are still world-isotropic, NOT axis-aligned.
+        self.assertLess(s.direction.mean(0).abs().max().item(), .015)
+
+    def test_axis_holds_until_force_cycle_and_partial_reset(self):
+        s = chip.ChipSchedule(16, "cpu", compliance_mode="wrist_axis", warmup_steps=0, ramp_steps=0)
+        before = s.stiffness_axis.clone()
+        s.c_remaining[:] = 1  # Compliance resampling must NOT change the axis.
+        s.age[:] = s.interval + s.duration//2
+        s.prepare()
+        torch.testing.assert_close(s.stiffness_axis, before)
+        s.age[0] = s.interval + s.duration[0]
+        s.prepare()
+        torch.testing.assert_close(s.stiffness_axis[1:], before[1:])
+        self.assertTrue((s.force[0] == 0).all())
+        other = s.stiffness_axis[1:].clone()
+        s.reset(torch.tensor([0]))
+        torch.testing.assert_close(s.stiffness_axis[1:], other)
+        s._sample_axis(torch.empty(0, dtype=torch.long))
+
+    def test_fixed_axis_normalization_and_config_validation(self):
+        s = chip.ChipSchedule(5, "cpu", compliance_mode="wrist_axis", fixed_stiffness_axis=[2, 0, 0])
+        torch.testing.assert_close(s.stiffness_axis, torch.tensor([[1., 0, 0]]).expand(5, 3))
+        for kwargs in ({"fixed_stiffness_axis": [0, 0, 0]}, {"fixed_stiffness_axis": [float("nan"), 0, 0]},
+                       {"fixed_stiffness_axis": [1, 0]}, {"compliance_mode": "unknown"},
+                       {"axis_probabilities": [.2, .6, .15, -.05]},
+                       {"axis_probabilities": [.2, .6, .15, .5]},
+                       {"axis_cone_degrees": [30, 20, 90]}, {"axis_cone_degrees": [30, 60, 100]}):
+            with self.subTest(kwargs=kwargs), self.assertRaises(ValueError):
+                chip.ChipSchedule(1, "cpu", **kwargs)
+
+    def test_training_axis_defaults(self):
+        config = yaml.safe_load((Path(__file__).parents[1] / "cfg/task/chip.yaml").read_text())["command"]["chip"]
+        self.assertEqual(config["compliance_mode"], "wrist_axis")
+        self.assertEqual(config["axis_probabilities"], [.20, .60, .15, .05])
+        self.assertEqual(config["axis_cone_degrees"], [30, 60, 90])
+        self.assertIsNone(config["fixed_stiffness_axis"])
+
     def test_force_at_offset_has_moment(self):
         f = torch.tensor([[[0., 10, 0]]])
         _, torque = chip.point_wrench(f, torch.tensor([[[.18, 0, 0]]]), torch.zeros_like(f))

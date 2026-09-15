@@ -163,6 +163,17 @@ def export_policy(cfg: DictConfig, env: "_EnvBase", policy) -> None:
     motion_cfg["root_body_name"] = command.root_body_name
     motion_cfg["anchor_body_name"] = command.anchor_body_name
 
+    if hasattr(command, "chip"):
+        policy_config["chip"] = {
+            "compliance_mode": command.chip.compliance_mode,
+            "command_dim": 57 if command.chip.compliance_mode == "wrist_axis" else 54,
+            "stiffness_axis_frame": "current_point_link" if command.chip.compliance_mode == "wrist_axis" else None,
+            "stiffness_axis_shared": True,
+            "point_bodies": command.chip_body_names,
+            "point_offsets": command.chip_offsets.cpu().tolist(),
+            "compliance_scale": command.chip_compliance_scale,
+        }
+
     with open(yaml_path, "w") as f:
         yaml.dump(policy_config, f, sort_keys=False)
 
@@ -174,6 +185,8 @@ def main(cfg: DictConfig):
     OmegaConf.resolve(cfg)
     OmegaConf.set_struct(cfg, False)
 
+    from chip_checkpoint import configure_chip_checkpoint
+    configure_chip_checkpoint(cfg, restore_mode=True)
     aa.init(cfg, auto_rank=True)
 
     from active_adaptation.helpers import make_env_policy

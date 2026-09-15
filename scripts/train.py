@@ -41,6 +41,8 @@ def main(cfg: DictConfig):
     OmegaConf.resolve(cfg)
     OmegaConf.set_struct(cfg, False)
 
+    from chip_checkpoint import configure_chip_checkpoint
+    configure_chip_checkpoint(cfg)
     aa.init(cfg, auto_rank=True)
 
     print(
