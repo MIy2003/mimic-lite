@@ -1,0 +1,22 @@
+# @package task
+defaults:
+  - three_point_chip
+  - _self_
+
+name: G1ThreePointChipAxis
+command:
+  chip:
+    compliance_mode: wrist_axis
+    axis_probabilities: [0.20, 0.60, 0.15, 0.05]
+    axis_cone_degrees: [30.0, 60.0, 90.0]
+    fixed_stiffness_axis: null
+reward:
+  chip_metrics:
+    left_wrist_force_parallel: {_target_: mimic_lite.three_point_chip_metric, body: 0, quantity: force_parallel, weight: 1.0, enabled: false}
+    left_wrist_force_perpendicular: {_target_: mimic_lite.three_point_chip_metric, body: 0, quantity: force_perpendicular, weight: 1.0, enabled: false}
+    left_wrist_error_parallel: {_target_: mimic_lite.three_point_chip_metric, body: 0, quantity: error_parallel, weight: 1.0, enabled: false}
+    left_wrist_error_perpendicular: {_target_: mimic_lite.three_point_chip_metric, body: 0, quantity: error_perpendicular, weight: 1.0, enabled: false}
+    right_wrist_force_parallel: {_target_: mimic_lite.three_point_chip_metric, body: 1, quantity: force_parallel, weight: 1.0, enabled: false}
+    right_wrist_force_perpendicular: {_target_: mimic_lite.three_point_chip_metric, body: 1, quantity: force_perpendicular, weight: 1.0, enabled: false}
+    right_wrist_error_parallel: {_target_: mimic_lite.three_point_chip_metric, body: 1, quantity: error_parallel, weight: 1.0, enabled: false}
+    right_wrist_error_perpendicular: {_target_: mimic_lite.three_point_chip_metric, body: 1, quantity: error_perpendicular, weight: 1.0, enabled: false}

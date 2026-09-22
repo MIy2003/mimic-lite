@@ -95,12 +95,15 @@ class ThreePointTests(unittest.TestCase):
     def test_chip_ppo_cpu_update_and_checkpoint(self):
         self._check_ppo(True)
 
-    def _check_ppo(self, compliance):
+    def test_axis_ppo_cpu_update_and_checkpoint(self):
+        self._check_ppo(True, axis=True)
+
+    def _check_ppo(self, compliance, axis=False):
         torch.manual_seed(5)
         env = SimpleNamespace(cfg=OmegaConf.create({'total_iters':4,'reward':{'tracking':{},'loco':{}}}),
                               action_manager=SimpleNamespace(action_dim=29,joint_names=[f'j{i}' for i in range(29)]))
-        spec = Composite({k:Unbounded((2,n)) for k,n in [('policy',556),('command',318 if compliance else 315),('priv',44 if compliance else 32),('link_mask',3)]},shape=(2,))
-        cfg = PPOConfig(goal_body_actor=True,goal_body_compliance=compliance,in_keys=('policy','command','priv','link_mask'),
+        spec = Composite({k:Unbounded((2,n)) for k,n in [('policy',556),('command',321 if axis else (318 if compliance else 315)),('priv',47 if axis else (44 if compliance else 32)),('link_mask',3)]},shape=(2,))
+        cfg = PPOConfig(goal_body_actor=True,goal_body_compliance=compliance,goal_body_axis=axis,in_keys=('policy','command','priv','link_mask'),
                         goal_body_embed_dim=32,goal_body_num_layers=1,goal_body_ff_dim=64,
                         critic_hidden_dims=(32,),ppo_epochs=1,num_minibatches=1,opt='muon',train_amp_dtype=None)
         policy = PPOPolicy(cfg,spec,None,None,'cpu',env)

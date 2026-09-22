@@ -77,6 +77,7 @@ class ThreePointChipTests(unittest.TestCase):
         c.goal_compliance = lambda: ThreePointChipTracking.goal_compliance(c)
         c.virtual_reference_points = lambda: ThreePointChipTracking.virtual_reference_points(c)
         c.chip_applied_force = torch.zeros(2,3,3)
+        c.chip_applied_axis = torch.zeros(2,3,3)
         return c
 
     def test_unclipped_shift_all_knots_error_and_compliance_order(self):

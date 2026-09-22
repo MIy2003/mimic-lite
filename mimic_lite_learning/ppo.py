@@ -188,6 +188,7 @@ class PPOConfig:
     actor_in_keys: Tuple[str, ...] = (OBS_KEY, CMD_KEY)
     goal_body_actor: bool = False
     goal_body_compliance: bool = False
+    goal_body_axis: bool = False
     goal_body_embed_dim: int = 256
     goal_body_num_heads: int = 4
     goal_body_num_layers: int = 3
@@ -403,7 +404,7 @@ class PPOPolicy(PPOBase):
         self.actor = self._build_actor(actor_in_keys)
         critic_prefix = []
         if self.cfg.goal_body_actor:
-            critic_prefix.append(Mod(LinkCommandMask(3, self.cfg.goal_body_compliance),
+            critic_prefix.append(Mod(LinkCommandMask(3, self.cfg.goal_body_compliance, self.cfg.goal_body_axis),
                                      [CMD_KEY, self.cfg.goal_body_link_mask_key], ["_goal_command"]))
             critic_in_keys = [OBS_PRIV_KEY, OBS_KEY, "_goal_command", self.cfg.goal_body_link_mask_key]
         self.critic = Seq(
@@ -501,6 +502,7 @@ class PPOPolicy(PPOBase):
             model = GoalBodyFlatActor(
                 action_dim=self.action_dim, num_links=3,
                 compliance=self.cfg.goal_body_compliance,
+                axis=self.cfg.goal_body_axis,
                 embed_dim=self.cfg.goal_body_embed_dim, num_heads=self.cfg.goal_body_num_heads,
                 num_layers=self.cfg.goal_body_num_layers, ff_dim=self.cfg.goal_body_ff_dim,
                 init_noise_scale=self.cfg.init_noise_scale,

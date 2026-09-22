@@ -9,6 +9,45 @@ checkpoints, deployment model, force scheduling or compliance axis.
 An optional **isotropic CHIP variant** is now provided separately; see below.
 The pure tracking task and the older `chip.yaml` are not replaced.
 
+## 三点 Transformer + wrist-axis CHIP
+
+新增独立入口 `train_three_point_chip_axis` / `replay_three_point_chip_axis`，
+任务为 `three_point_chip_axis`。沿用三点 CHIP 的硬件点、奖励、外力和柔顺采样。
+
+- command 为 **321 维**：315 维三点目标、3 维 `10*c`（pelvis/左/右）、
+  3 维共享局部单位轴 `u_local`。每个 goal token 接收 109 维（105+1+3）。
+- 与旧 wrist-axis CHIP 相同：`u_world = R_actual_link @ u_local`，左右腕分别
+  使用实际 `left_wrist_yaw_link` / `right_wrist_yaw_link` 的姿态，非参考姿态或 COM。
+- 虚拟手部目标为 `p_nominal - c * dot(F_world,u_world) * u_world`，
+  全部 11 个目标时刻使用当前外力，不做位移限幅。pelvis 柔顺恒为零。
+- 物理施力仍是完整外力及偏移点力矩；reward 仍跟踪原始参考。
+- axis 复用旧 CHIP 的采样：以局部 +X 为中心，20% 精确 +X，
+  60% 在 0–30°、15% 在 30–60°、5% 在 60–90°，各区间按立体角均匀采样。
+  reset 和外力周期更新时采样；`fixed_stiffness_axis` 可固定并自动归一化。
+- 新增左右手 `force_parallel` / `force_perpendicular`（N）和
+  `error_parallel` / `error_perpendicular`（m），例如
+  `reward.chip_metrics/right_wrist_error_parallel`。分量取模长；位置误差对照
+  执行帧的原始硬件点参考，投影轴缓存自最后一个物理子步，避免下一周期轴混入。
+  全部仅记录，不进入奖励。`reward.chip_metrics/...` 是逐步 EMA；
+  `train/stats/chip_metrics/...` 是回合累加值，不是平均误差或平均力。
+- policy 为 556 维、mask 为 3 维、输出 29 个关节动作。
+  新增 critic 特权量共 15 维（完整力9、柔顺3、axis3）。
+- 这是新网络输入契约；315D/318D/旧 CHIP checkpoint 不能直接加载。
+
+从 `active-adaptation` 目录运行：
+
+```bash
+bash projects/mimic-lite/scripts/train_three_point_chip_axis.sh
+# 固定局部 X 轴（默认则采样）：
+bash projects/mimic-lite/scripts/train_three_point_chip_axis.sh \
+  'task.command.chip.fixed_stiffness_axis=[1,0,0]'
+# 回放默认无外力、零柔顺：
+venv/mjlab/.venv/bin/python projects/mimic-lite/scripts/play.py \
+  --config-name replay_three_point_chip_axis checkpoint_path=/path/to/checkpoint.pt
+# 空闲 GPU 上进行小规模仿真和一次 PPO 更新：
+venv/mjlab/.venv/bin/python projects/mimic-lite/scripts/smoke_three_point.py --axis
+```
+
 ## 三点 Transformer + 无 axis CHIP
 
 入口：`cfg/train_three_point_chip.yaml`、`cfg/task/three_point_chip.yaml`、
@@ -113,9 +152,12 @@ sbatch projects/mimic-lite/scripts/train_three_point_chip_lambda_4gpu.slurm
 
 默认单节点四卡、64 CPU、`research` account、`lv0b` QoS、`HGX,DGX`
 partition、两天时限、30,000 iterations，W&B offline，从头训练。
-每卡环境数默认读取单卡测试生成的 `.cache/three_point_chip_lambda_profile.json`，
-并检查四张 GPU 型号/容量与测试机器匹配。不再默认使用 1024；尚无通过的
-实测结果时脚本会退出提示，而不是猜测显存上限。也可显式 `NUM_ENVS=... sbatch ...`。
+每卡环境数默认 `14336`，可显式 `NUM_ENVS=... sbatch ...` 覆盖。
+设置 `NUM_ENVS=auto` 才读取单卡测试生成的
+`.cache/three_point_chip_lambda_profile.json`，并检查四张 GPU 型号/容量。
+axis 入口为 `scripts/train_three_point_chip_axis_lambda_4gpu.slurm`，
+它选择 `three_point_chip_axis` 并调用共用启动器；auto 目前复用无 axis 的
+容量测试结果，尚不是独立的 axis 容量验证。
 
 单卡测试按用户的 `salloc -N 1 -t 8:00:00 --cpus-per-task 64 --account=research
 --qos=lv0a --job-name dexhand --gres=gpu:1 -p HGX,DGX` 申请，入口为

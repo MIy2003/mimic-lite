@@ -1,0 +1,8 @@
+defaults:
+  - train_three_point_chip
+  - override task: three_point_chip_axis
+  - _self_
+
+algo:
+  goal_body_axis: true
+exp_name: three-point-transformer-chip-axis

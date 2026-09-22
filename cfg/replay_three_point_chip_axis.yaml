@@ -1,0 +1,7 @@
+defaults:
+  - replay_three_point_chip
+  - override task: three_point_chip_axis
+  - _self_
+
+algo:
+  goal_body_axis: true

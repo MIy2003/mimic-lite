@@ -11,16 +11,22 @@ from torch.utils.checkpoint import checkpoint
 
 class LinkCommandMask(nn.Module):
     """Zero inactive link-major 105D slots."""
-    def __init__(self, num_links: int = 6, compliance: bool = False):
+    def __init__(self, num_links: int = 6, compliance: bool = False, axis: bool = False):
         super().__init__(); self.num_links = num_links
         self.compliance = compliance
+        self.axis = axis
+        if axis and not compliance:
+            raise ValueError("Axis input requires compliance")
     def forward(self, command: torch.Tensor, link_mask: torch.Tensor) -> torch.Tensor:
-        if command.shape[-1] != (105 + int(self.compliance)) * self.num_links or link_mask.shape != (*command.shape[:-1], self.num_links):
+        if command.shape[-1] != (105 + int(self.compliance)) * self.num_links + 3 * int(self.axis) or link_mask.shape != (*command.shape[:-1], self.num_links):
             raise ValueError(f"Expected {self.num_links} link command slots and mask.")
         slots = command[..., :105*self.num_links].reshape(*command.shape[:-1], self.num_links, 105)
         masked = torch.where(link_mask[..., None] > 0.5, slots, 0.0).flatten(-2)
         if self.compliance:
-            masked = torch.cat((masked, torch.where(link_mask > .5, command[..., 105*self.num_links:], 0.)), -1)
+            masked = torch.cat((masked, torch.where(link_mask > .5, command[..., 105*self.num_links:106*self.num_links], 0.)), -1)
+        if self.axis:
+            shared = torch.where((link_mask > .5).any(-1, keepdim=True), command[..., -3:], 0.)
+            masked = torch.cat((masked, shared), -1)
         return masked
 
 
@@ -45,6 +51,7 @@ class GoalBodyActor(nn.Module):
         activation_checkpointing: bool = False,
         activation_checkpoint_batch_size: int = 8192,
         compliance: bool = False,
+        axis: bool = False,
     ) -> None:
         super().__init__()
         if action_dim != 29:
@@ -63,9 +70,12 @@ class GoalBodyActor(nn.Module):
             raise ValueError("Activation checkpoint batch size must be positive.")
         self.activation_checkpoint_batch_size = int(activation_checkpoint_batch_size)
         self.compliance = compliance
-        self.command_mask = LinkCommandMask(num_links, compliance)
+        self.axis = axis
+        if axis and not compliance:
+            raise ValueError("Axis input requires compliance")
+        self.command_mask = LinkCommandMask(num_links, compliance, axis)
         self.goal_encoder = nn.Sequential(
-            nn.Linear(105 + int(compliance), embed_dim), nn.LayerNorm(embed_dim), nn.Mish(),
+            nn.Linear(105 + int(compliance) + 3 * int(axis), embed_dim), nn.LayerNorm(embed_dim), nn.Mish(),
             nn.Linear(embed_dim, embed_dim),
         )
         self.joint_encoder = nn.Sequential(
@@ -151,12 +161,16 @@ class GoalBodyActor(nn.Module):
         batch_shape = policy.shape[:-1]
         if policy.shape[-1] != 493 or root_history.shape != (*batch_shape, 63):
             raise ValueError("Expected joint history [...,493] and root history [...,63].")
-        if command.shape != (*batch_shape, (105 + int(self.compliance)) * self.num_links):
+        if command.shape != (*batch_shape, (105 + int(self.compliance)) * self.num_links + 3 * int(self.axis)):
             raise ValueError(f"Expected {self.num_links} link-major goal slots.")
         command = self.command_mask(command, link_mask)
         slots = command[..., :105*self.num_links].reshape(-1, self.num_links, 105)
         if self.compliance:
-            slots = torch.cat((slots, command[..., 105*self.num_links:].reshape(-1, self.num_links, 1)), -1)
+            slots = torch.cat((slots, command[..., 105*self.num_links:106*self.num_links].reshape(-1, self.num_links, 1)), -1)
+        if self.axis:
+            shared = command[..., -3:].reshape(-1, 1, 3).expand(-1, self.num_links, -1)
+            shared = torch.where(link_mask.reshape(-1, self.num_links, 1) > .5, shared, 0.)
+            slots = torch.cat((slots, shared), -1)
         goals = self.goal_encoder(slots)
         joints = self.joint_encoder(policy.reshape(-1, 493)).unsqueeze(1)
         root = self.root_encoder(root_history.reshape(-1, 63)).unsqueeze(1)

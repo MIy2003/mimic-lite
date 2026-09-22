@@ -13,13 +13,13 @@ SPLIT_DIR = "physical_rollout_inherited_family_80_10_10_seed20260828_v1"
 
 
 def load_task_template(name):
-    if name == "three_point_chip":
+    if name in ("three_point_chip", "three_point_chip_axis"):
         # Flatten inheritance BEFORE replacing motion_cfgs, otherwise the base
         # task's default motion pool is silently merged into the four real pools.
         from hydra import compose, initialize_config_dir
         from omegaconf import OmegaConf
         with initialize_config_dir(config_dir=str(PROJECT / "cfg"), version_base=None):
-            cfg = compose(config_name="task/three_point_chip")
+            cfg = compose(config_name=f"task/{name}")
         return OmegaConf.to_container(cfg.task, resolve=False)
     return yaml.safe_load((PROJECT / f"cfg/task/{name}.yaml").read_text())
 
@@ -28,7 +28,7 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--root", type=Path, default=FRAMEWORK.parent / "loco_manip_physical_rollout_accepted_v1")
     parser.add_argument("--output", type=Path)
-    parser.add_argument("--task-template", choices=("chip", "three_point", "three_point_chip"), default="chip")
+    parser.add_argument("--task-template", choices=("chip", "three_point", "three_point_chip", "three_point_chip_axis"), default="chip")
     args = parser.parse_args()
     template = load_task_template(args.task_template)
     root = args.root.resolve()

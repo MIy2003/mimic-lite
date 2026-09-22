@@ -12,8 +12,12 @@ def check_three_point_checkpoint(cfg):
     compliant = target == "mimic_lite.ThreePointChipTracking"
     if OmegaConf.select(cfg, "algo.goal_body_compliance", default=False) != compliant:
         raise ValueError("goal_body_compliance must match the task's 315D/318D command contract")
-    if compliant and OmegaConf.select(cfg, "task.command.chip.compliance_mode") != "isotropic":
-        raise ValueError("Three-point CHIP requires isotropic compliance (no axis)")
+    mode = OmegaConf.select(cfg, "task.command.chip.compliance_mode")
+    axis = OmegaConf.select(cfg, "algo.goal_body_axis", default=False)
+    if compliant and mode not in ("isotropic", "wrist_axis"):
+        raise ValueError("Unsupported three-point compliance mode")
+    if axis != (compliant and mode == "wrist_axis"):
+        raise ValueError("goal_body_axis must match the wrist_axis 321D command contract")
     if not cfg.get("checkpoint_path"):
         return
     from active_adaptation.utils.wandb import parse_checkpoint_path
@@ -26,6 +30,8 @@ def check_three_point_checkpoint(cfg):
     if sidecar is None:
         raise ValueError("Keep the three-point checkpoint's cfg.yaml beside its weights")
     saved = OmegaConf.load(sidecar)
+    if OmegaConf.select(saved, "algo.goal_body_axis", default=False) != axis:
+        raise ValueError("Checkpoint axis input differs (318D vs 321D)")
     if OmegaConf.select(saved, "algo.goal_body_compliance", default=False) != compliant:
         raise ValueError("Checkpoint goal_body_compliance differs (315D vs 318D)")
     if compliant:

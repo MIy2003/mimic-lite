@@ -8,7 +8,7 @@ export HF_HUB_OFFLINE="${HF_HUB_OFFLINE:-1}" HF_HUB_DISABLE_TELEMETRY=1
 export ANY4HDMI_CACHE_BUILD_NUM_WORKERS="${ANY4HDMI_CACHE_BUILD_NUM_WORKERS:-0}"
 export OMP_NUM_THREADS="${OMP_NUM_THREADS:-4}"
 variant="${THREE_POINT_VARIANT:-three_point}"
-case "$variant" in three_point|three_point_chip) ;; *) echo "Invalid THREE_POINT_VARIANT: $variant" >&2; exit 2 ;; esac
+case "$variant" in three_point|three_point_chip|three_point_chip_axis) ;; *) echo "Invalid THREE_POINT_VARIANT: $variant" >&2; exit 2 ;; esac
 "$python_bin" "$script_dir/prepare_chip_loco.py" --task-template "$variant" \
   --root "${THREE_POINT_DATA_ROOT:-$framework_root/../loco_manip_physical_rollout_accepted_v1}" \
   --output "$framework_root/.cache/${variant}_loco"
