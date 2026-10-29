@@ -111,6 +111,25 @@ class _tracking_body(TrackReward, namespace="mimic_lite"):
         raise NotImplementedError
 
 
+class body_tracking_squared_exp(_tracking_body, namespace="mimic_lite"):
+    """BM-style tracking: exp(-mean(squared body error) / sigma**2)."""
+
+    def _initialize_impl(self, error_type: str, **kwargs):
+        if error_type not in (
+            "body_pos_error", "body_ori_error", "body_pos_error_local",
+            "body_ori_error_local", "body_lin_vel_error", "body_ang_vel_error",
+        ):
+            raise ValueError(f"Unsupported body tracking error: {error_type}")
+        super()._initialize_impl(**kwargs)
+        if self.sigma <= 0:
+            raise ValueError("Body tracking sigma must be positive")
+        self.error_type = error_type
+
+    def _compute(self):
+        error = getattr(self.command_manager, self.error_type)[:, self.body_indices_tracking]
+        return torch.exp(-error.square().mean(dim=1) / self.sigma**2).unsqueeze(1)
+
+
 class body_pos_exp(_tracking_body, namespace="mimic_lite"):
     def _compute(self):
         error = self.command_manager.body_pos_error[:, self.body_indices_tracking]

@@ -57,6 +57,30 @@ class CheckpointModeTests(unittest.TestCase):
         self.assertIsNone(module.configure_chip_checkpoint(self.cfg))
         self.assertEqual(self.cfg.task.command.chip.compliance_mode, "wrist_axis")
 
+    def test_sixd_restores_units_but_preserves_eval_wrench_overrides(self):
+        self.save(dict(compliance_mode='wrist_6d',compliance_6d_max=[.02,.02,.02,.2,.2,.2],
+            compliance_6d_scale=[50.,50.,50.,5.,5.,5.],left_compliance_mode='rigid'))
+        module.configure_chip_checkpoint(self.cfg,restore_mode=True)
+        self.assertEqual(self.cfg.task.command.chip.compliance_mode,'wrist_6d')
+        self.assertEqual(self.cfg.task.command.chip.compliance_6d_scale[-1],5.)
+        self.assertEqual(self.cfg.task.command.chip.max_force,0)
+        module.configure_chip_checkpoint(self.cfg)
+        self.cfg.task.command.chip.compliance_6d_scale[-1]=10.
+        with self.assertRaisesRegex(ValueError,'changed six-dimensional'):
+            module.configure_chip_checkpoint(self.cfg)
+
+    def test_binary_joint_resume_and_legacy_adapter_guard(self):
+        self.cfg.task.command.chip = OmegaConf.create(dict(
+            compliance_mode="wrist_joint_binary", compliance_6d_max=[.02]*3+[.8]*3,
+            compliance_6d_scale=[50.]*3+[1.25]*3, left_compliance_mode="rigid"))
+        self.save(OmegaConf.to_container(self.cfg.task.command.chip))
+        module.configure_chip_checkpoint(self.cfg)
+        with self.assertRaisesRegex(ValueError, "75D wrist-joint deployment adapter"):
+            module.configure_chip_checkpoint(self.cfg,restore_mode=True)
+        self.cfg.task.command.chip.compliance_mode="wrist_6d"
+        with self.assertRaisesRegex(ValueError, "Cannot resume"):
+            module.configure_chip_checkpoint(self.cfg)
+
 
 if __name__ == "__main__":
     unittest.main()

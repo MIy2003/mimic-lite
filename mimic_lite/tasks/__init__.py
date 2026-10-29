@@ -5,3 +5,4 @@ from . import observations
 from . import rewards
 from . import terminations
 from . import chip
+from . import chip_five_point

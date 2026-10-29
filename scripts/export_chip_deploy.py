@@ -51,7 +51,8 @@ def main(cfg: DictConfig):
         joint_kp.append(float(matches[0].stiffness))
         joint_kd.append(float(matches[0].damping))
     contract = {
-        "format": "mimic_lite_chip_v2" if c.chip.compliance_mode == "wrist_axis" else "mimic_lite_chip_v1",
+        "format": {"isotropic": "mimic_lite_chip_v1", "wrist_axis": "mimic_lite_chip_v2",
+                   "wrist_6d": "mimic_lite_chip_6d_v3"}[c.chip.compliance_mode],
         "checkpoint": str(Path(cfg.checkpoint_path).resolve()),
         "checkpoint_sha256": hashlib.sha256(Path(cfg.checkpoint_path).read_bytes()).hexdigest(),
         "policy_joint_names": names,
@@ -75,6 +76,30 @@ def main(cfg: DictConfig):
                            if c.chip.compliance_mode == "wrist_axis" else None),
         "normalization":"frozen VecNorm embedded in ONNX",
     }
+    if c.chip.compliance_mode == "wrist_6d":
+        contract.update(
+            compliance_scale=c.chip_compliance_6d_scale.cpu().tolist(),
+            physical_compliance_max=c.chip.c6_max.cpu().tolist(),
+            compliance_channels=["cx", "cy", "cz", "crx", "cry", "crz"],
+            compliance_units=["m/N"] * 3 + ["rad/(N m)"] * 3,
+            compliance_frame="actual wrist orientation; hardware control point origin",
+            left_compliance_training_mode=c.chip.left_compliance_mode,
+            command_layout="lower q[0:12], lower dq[12:24], point p[24:33], point quat[33:45], anchor[45:51], compliance[51:69]",
+            compliance_point_order=["left", "right", "torso"],
+            torso_compliance="six zeros",
+        )
+    from mimic_lite.tasks.chip_five_point import ChipFivePointTracking
+    if isinstance(c, ChipFivePointTracking):
+        contract.update(
+            format="mimic_lite_chip_five_point_v1",
+            lower_joint_names=[],
+            point_bodies=c.chip_body_names + c.foot_body_names,
+            point_offsets=torch.cat((c.chip_offsets, c.foot_offsets)).cpu().tolist(),
+            command_layout="point p[0:15], point quat[15:35], anchor[35:41], upper compliance[41:59]",
+            point_order=["left_hand", "right_hand", "torso", "left_foot", "right_foot"],
+            foot_compliance="rigid targets; no foot compliance channels or CHIP foot wrenches",
+            foot_point_definition="ankle-roll link frame plus exported offset",
+        )
     model = onnx.load(output / "policy.onnx", load_external_data=True)
     onnx.helper.set_model_props(model, {"mimic_lite_chip_contract":json.dumps(contract)})
     onnx.save_model(model, output / "policy.onnx", save_as_external_data=False)

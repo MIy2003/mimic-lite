@@ -1,0 +1,83 @@
+# @package task
+defaults:
+  - chip_6d
+  - _self_
+
+name: G1ChipFivePoint
+command:
+  _target_: mimic_lite.ChipFivePointTracking
+  # Foot targets use ankle-roll link origins, not an assumed sole-center offset.
+  foot_point_offsets: [[0.0, 0.0, 0.0], [0.0, 0.0, 0.0]]
+  chip:
+    # Match job 977's hand compliance and sampling; feet remain rigid targets.
+    compliance_mode: wrist_6d
+    compliance_6d_max: [0.02, 0.02, 0.02, 1.0, 1.0, 1.0]
+    compliance_6d_scale: [50.0, 50.0, 50.0, 1.0, 1.0, 1.0]
+    left_compliance_mode: rigid
+    translation_pattern_probabilities: [0.25, 0.05, 0.05, 0.35, 0.25, 0.05]
+    rotation_pattern_probabilities: [0.0, 0.0, 0.0, 0.75, 0.25, 0.0]
+    max_torque: 4.0
+    torque_amplitude_bands: null
+    angular_hindsight_limit: 2.0943951023931953
+observation:
+  command:
+    chip_command: {_target_: mimic_lite.chip_five_point_command}
+  priv:
+    chip_privileged: {_target_: mimic_lite.chip_five_point_privileged}
+reward:
+  tracking:
+    # Retain lower-body supervision and restore the bilateral upper-body links
+    # tracked by 862 in separate, light terms. Reference joints remain training
+    # supervision only; inference still accepts five poses without leg q/dq.
+    body_pos:
+      weight: 0.50
+      body_names: [pelvis, torso_link, ".*_hip_roll_link", ".*_knee_link", ".*_ankle_roll_link"]
+    body_ori:
+      weight: 0.50
+      body_names: [pelvis, torso_link, ".*_hip_roll_link", ".*_knee_link", ".*_ankle_roll_link"]
+    body_linvel:
+      weight: 0.25
+      body_names: [pelvis, torso_link, ".*_hip_roll_link", ".*_knee_link", ".*_ankle_roll_link"]
+    body_angvel:
+      weight: 0.25
+      body_names: [pelvis, torso_link, ".*_hip_roll_link", ".*_knee_link", ".*_ankle_roll_link"]
+    upper_body_pos:
+      _target_: mimic_lite.body_tracking_squared_exp
+      error_type: body_pos_error_local
+      body_names: [".*_shoulder_roll_link", ".*_elbow_link", ".*_wrist_yaw_link"]
+      weight: 0.15
+      sigma: 0.30
+    upper_body_ori:
+      _target_: mimic_lite.body_tracking_squared_exp
+      error_type: body_ori_error_local
+      body_names: [".*_shoulder_roll_link", ".*_elbow_link", ".*_wrist_yaw_link"]
+      weight: 0.15
+      sigma: 0.40
+    upper_body_linvel:
+      _target_: mimic_lite.body_tracking_squared_exp
+      error_type: body_lin_vel_error
+      body_names: [".*_shoulder_roll_link", ".*_elbow_link", ".*_wrist_yaw_link"]
+      weight: 0.05
+      sigma: 1.0
+    upper_body_angvel:
+      _target_: mimic_lite.body_tracking_squared_exp
+      error_type: body_ang_vel_error
+      body_names: [".*_shoulder_roll_link", ".*_elbow_link", ".*_wrist_yaw_link"]
+      weight: 0.05
+      sigma: 3.14
+    # Match torso and left-hand tracking at every position/orientation scale.
+    chip_pos: {point_weights: [2, 4, 2]}
+    chip_pos_precision: {point_weights: [2, 4, 2]}
+    chip_pos_fine: {point_weights: [2, 4, 2]}
+    chip_ori: {point_weights: [2, 4, 2]}
+    chip_ori_precision: {point_weights: [2, 4, 2]}
+    chip_ori_fine: {point_weights: [2, 4, 2]}
+    # Additional torso-only rewards requested alongside equal L/torso weights.
+    chip_torso_pos: {_target_: mimic_lite.chip_tracking_reward, weight: 0.5, sigma: 0.05, point_weights: [0, 0, 1]}
+    chip_torso_ori: {_target_: mimic_lite.chip_tracking_reward, weight: 0.75, sigma: 0.30, orientation: true, point_weights: [0, 0, 1]}
+    chip_torso_ori_precision: {_target_: mimic_lite.chip_tracking_reward, weight: 0.5, sigma: 0.10, orientation: true, point_weights: [0, 0, 1]}
+    feet_pos: {_target_: mimic_lite.chip_feet_tracking_reward, weight: 1.0, sigma: 0.10}
+    feet_ori: {_target_: mimic_lite.chip_feet_tracking_reward, weight: 0.5, sigma: 0.40, orientation: true}
+  chip_metrics:
+    torso_error: {_target_: mimic_lite.chip_metric, quantity: torso_error, weight: 1.0, enabled: false}
+    torso_ori_error: {_target_: mimic_lite.chip_metric, quantity: torso_ori_error, weight: 1.0, enabled: false}

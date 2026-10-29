@@ -101,13 +101,15 @@ observation:
     chip_privileged: {_target_: mimic_lite.chip_privileged}
 reward:
   tracking:
-    root_pos: {_target_: mimic_lite.body_pos_exp, body_names: [torso_link], weight: 0.5, sigma: 0.3}
-    root_ori: {_target_: mimic_lite.body_ori_exp, body_names: [torso_link], weight: 0.5, sigma: 0.4}
-    root_linvel: {_target_: mimic_lite.body_lin_vel_exp, body_names: [torso_link], weight: 0.5, sigma: 1.0}
-    root_angvel: {_target_: mimic_lite.body_ang_vel_exp, body_names: [torso_link], weight: 0.5, sigma: 2.5}
-    # Avoid giving the arms a competing full-joint tracking objective.
-    lower_pos: {_target_: mimic_lite.body_pos_local_exp, body_names: '${task.shared.lower_body_names}', weight: 1.0, sigma: 0.3}
-    lower_ori: {_target_: mimic_lite.body_ori_local_exp, body_names: '${task.shared.lower_body_names}', weight: 1.0, sigma: 0.4}
+    # Restore whole-body constraints alongside the precise CHIP endpoint rewards.
+    # These use exp(-mean(error**2) / sigma**2), as in BM/CHIP.
+    root_pos: {_target_: mimic_lite.body_tracking_squared_exp, error_type: body_pos_error, body_names: [pelvis], weight: 0.5, sigma: 0.3}
+    root_ori: {_target_: mimic_lite.body_tracking_squared_exp, error_type: body_ori_error, body_names: [pelvis], weight: 0.5, sigma: 0.4}
+    body_pos: {_target_: mimic_lite.body_tracking_squared_exp, error_type: body_pos_error_local, body_names: '${task.shared.tracking_body_names}', weight: 1.0, sigma: 0.3}
+    body_ori: {_target_: mimic_lite.body_tracking_squared_exp, error_type: body_ori_error_local, body_names: '${task.shared.tracking_body_names}', weight: 1.0, sigma: 0.4}
+    body_linvel: {_target_: mimic_lite.body_tracking_squared_exp, error_type: body_lin_vel_error, body_names: '${task.shared.tracking_body_names}', weight: 1.0, sigma: 1.0}
+    body_angvel: {_target_: mimic_lite.body_tracking_squared_exp, error_type: body_ang_vel_error, body_names: '${task.shared.tracking_body_names}', weight: 1.0, sigma: 3.14}
+    # Keep lower-joint tracking; arms are constrained through body poses instead.
     lower_joint_pos: {_target_: mimic_lite.joint_pos_tracking_product, joint_names: '${task.shared.lower_joint_names}', weight: 0.5, sigma: 0.25}
     lower_joint_vel: {_target_: mimic_lite.joint_vel_tracking_product, joint_names: '${task.shared.lower_joint_names}', weight: 0.5, sigma: 2.5}
     chip_pos: {_target_: mimic_lite.chip_tracking_reward, weight: 2.0, sigma: 0.10}
@@ -125,6 +127,7 @@ reward:
     joint_vel_l2: {weight: 1.0e-4, joint_names: .*}
     joint_pos_limits: {_target_: mimic_lite.joint_pos_limits, weight: 10.0, joint_names: .*, soft_factor: 0.9}
     self_collisions: {_target_: mimic_lite.self_collisions, weight: -1.0, sensor_name: self_collision, force_threshold: 1.0}
+    undesired_ground_contacts: {_target_: mimic_lite.undesired_ground_contacts, weight: -0.1, sensor_name: undesired_ground_contact, force_threshold: 1.0}
     survival: {weight: 4.0}
   chip_metrics:
     _enabled_: false

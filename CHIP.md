@@ -3,6 +3,10 @@
 Implemented in the installed project at `active-adaptation/projects/mimic-lite`.
 The integration repository's other `mimic-lite/` checkout is independent.
 
+The optional [six-dimensional extension](CHIP_6D.md) uses `task=chip_6d` with
+the same upper-body three-point plus lower-body-joint interface and native
+MimicLite network. The legacy `chip` task remains available.
+
 ## Training contract
 
 `task=chip` uses MimicLite PPO, the mode-15 G1 model, and MJLab. It ports the
@@ -68,9 +72,27 @@ The formula is `exp(-weighted_mean(error_squared) / sigma**2)`; sigma is a
 reward scale, not a guaranteed tracking tolerance. Broad terms remain to
 provide learning signal at larger errors. These tighter scales and the new
 right-hand weight require training validation, including compliance response.
-Lower-body/root tracking and regularization remain, but there
-is no competing upper-arm reference-joint reward. Critic-only inputs contain
-the original points and external force.
+Whole-body constraints accompany the endpoint rewards: global pelvis position
+and orientation (weights .5/.5, scales .3 m/.4 rad), anchor-local positions and
+orientations of all tracking bodies (weights 1/1, scales .3 m/.4 rad), and global
+body linear/angular velocities (weights 1/1, scales 1 m/s/3.14 rad/s). These six
+terms use `exp(-mean(error_squared) / sigma**2)`, matching BM/CHIP's reward
+curve. Local poses still use MimicLite's anchor frame and link selection, so
+this is not an exact reproduction of BM's coordinate handling.
+Shoulders and elbows now contribute directly even when wrist points are exact.
+Lower-joint tracking and existing regularization remain; upper-arm joint angles
+are not directly rewarded. A CHIP-only terrain contact sensor counts bodies
+with forces above 1 N over the last four physics steps (weight -.1 per body),
+excluding feet and hands. The separate self-collision penalty remains enabled.
+Critic-only inputs contain the original points and external force.
+
+After changing rewards, rerun `scripts/prepare_chip_loco.py` before using cached
+`chip_loco_*` configurations. For a short integration check, run
+`python projects/mimic-lite/scripts/smoke_chip.py --mode wrist_axis` from the
+framework directory in the MJLab environment. Reward coverage and contact
+counting checks are in `tests/test_chip_rewards.py`. These changes require
+training and rollout comparison to assess elbow posture and compliance; they
+do not change the behavior of an already trained checkpoint by themselves.
 
 ## Actor interface
 

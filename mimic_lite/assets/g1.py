@@ -360,6 +360,24 @@ def _build_g1_chip_payload_cfg(backend: str):
     make_spec = asset_spec.config.spec_fn
     # Modify a fresh copy, avoiding cumulative additions across builds.
     asset_spec.config.spec_fn = lambda: add_wrist_payload(make_spec().copy())
+    from mjlab.sensor import ContactMatch, ContactSensorCfg
+
+    # Per-body terrain forces; hands and feet are allowed to make contact.
+    # Keep this sensor specific to the CHIP asset.
+    asset_spec.sensors = (*asset_spec.sensors, ContactSensorCfg(
+        name="undesired_ground_contact",
+        primary=ContactMatch(
+            mode="body",
+            pattern=".*",
+            entity="robot",
+            exclude=(".*_ankle_roll_link", ".*_toe_link", ".*_wrist_yaw_link", ".*hand.*", ".*finger.*"),
+        ),
+        secondary=ContactMatch(mode="body", pattern="terrain", entity=None),
+        fields=("force",),
+        reduce="netforce",
+        num_slots=1,
+        history_length=4,
+    ))
     return asset_spec
 
 

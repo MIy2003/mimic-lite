@@ -39,5 +39,7 @@ task:
       compliance_max: [0.0, 0.0, 0.0]
       # Default: inspect unforced tracking. Override max_force=20 for perturbations.
       max_force: 0.0
+      max_torque: 0.0
+      rigid_probability: 1.0
       warmup_steps: 0
       ramp_steps: 0

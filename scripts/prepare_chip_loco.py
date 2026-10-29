@@ -4,9 +4,10 @@ import json
 from pathlib import Path
 
 import yaml
+from omegaconf import OmegaConf
 
 PROJECT = Path(__file__).resolve().parents[1]
-FRAMEWORK = PROJECT.parents[1]
+FRAMEWORK = PROJECT.parent / "active-adaptation" if (PROJECT.parent / "active-adaptation").is_dir() else PROJECT.parents[1]
 POOLS = ("core_motiondecode", "core_sonic", "support_motiondecode", "support_sonic")
 SPLIT_DIR = "physical_rollout_inherited_family_80_10_10_seed20260828_v1"
 
@@ -15,6 +16,9 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--root", type=Path, default=FRAMEWORK.parent / "loco_manip_physical_rollout_accepted_v1")
     parser.add_argument("--output", type=Path, default=FRAMEWORK / ".cache/chip_loco")
+    mode = parser.add_mutually_exclusive_group()
+    mode.add_argument("--sixd", action="store_true", help="Generate chip_6d_loco_* tasks")
+    mode.add_argument("--five-point", action="store_true", help="Generate five-pose tasks with rigid foot targets")
     args = parser.parse_args()
     root, output = args.root.resolve(), args.output.resolve()
     splits, all_paths = {}, set()
@@ -54,8 +58,13 @@ def main():
     for split, grouped in splits.items():
         report["splits"][split] = {pool: len(entries) for pool, entries in grouped.items()}
         for smoke in (False, True):
-            name = f"chip_loco_{split}" + ("_smoke" if smoke else "")
+            name = f"chip_{'five_point_' if args.five_point else '6d_' if args.sixd else ''}loco_{split}" + ("_smoke" if smoke else "")
             cfg = yaml.safe_load((PROJECT / "cfg/task/chip.yaml").read_text())
+            overlays = (["chip_6d", "chip_five_point"] if args.five_point else ["chip_6d"] if args.sixd else [])
+            for name_overlay in overlays:
+                overlay = OmegaConf.load(PROJECT / f"cfg/task/{name_overlay}.yaml")
+                del overlay["defaults"]
+                cfg = OmegaConf.to_container(OmegaConf.merge(cfg, overlay), resolve=False)
             cfg["name"] = name
             cfg["command"]["motion_cfgs"] = {}
             for pool, entries in grouped.items():

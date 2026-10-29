@@ -18,9 +18,9 @@ def main(cfg: DictConfig):
     OmegaConf.set_struct(cfg,False)
     from chip_checkpoint import configure_chip_checkpoint
     configure_chip_checkpoint(cfg, restore_mode=True)
-    if cfg.task.command.chip.compliance_mode == "wrist_axis":
+    if cfg.task.command.chip.compliance_mode != "isotropic":
         raise ValueError("This parity script targets the legacy 54D deployment adapter. "
-                         "wrist_axis requires a v2 adapter supplying command[54:57]; do not deploy it as v1.")
+                         "wrist_axis needs a v2 adapter; wrist_6d needs a 69D v3 adapter. Do not deploy either as v1.")
     cfg.task.randomization = {}
     aa.init(cfg,auto_rank=True)
     from active_adaptation.helpers import make_env_policy

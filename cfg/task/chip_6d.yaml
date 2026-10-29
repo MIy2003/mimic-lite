@@ -1,0 +1,39 @@
+# @package task
+defaults:
+  - chip
+  - _self_
+
+name: G1Chip6D
+# BM body selection. Keep the existing MuJoCo velocity representation unchanged.
+shared:
+  tracking_body_names: [pelvis, torso_link, ".*_hip_roll_link", ".*_knee_link", ".*_ankle_roll_link", ".*_shoulder_roll_link", ".*_elbow_link", ".*_wrist_yaw_link"]
+  lower_body_names: [pelvis, torso_link, ".*_hip_roll_link", ".*_knee_link", ".*_ankle_roll_link"]
+command:
+  chip:
+    compliance_mode: wrist_6d
+    compliance_6d_max: [0.02, 0.02, 0.02, 0.8, 0.8, 0.8]
+    compliance_6d_scale: [50.0, 50.0, 50.0, 1.25, 1.25, 1.25]
+    left_compliance_mode: rigid
+    translation_pattern_probabilities: [0.16, 0.16, 0.16, 0.16, 0.16, 0.20]
+    rotation_pattern_probabilities: [0.16, 0.16, 0.16, 0.16, 0.16, 0.20]
+    structured_max_probability: 0.5
+    rigid_probability: 0.25
+    torque_axis_probability: 0.8
+    max_torque: 2.0
+    # Peak norm, before pulse envelope; signs/directions sampled separately.
+    torque_amplitude_bands: [[0.1, 0.6, 0.70], [0.6, 1.0, 0.20], [1.0, 2.0, 0.10]]
+    # Condition physical torque sampling on ||C_R tau|| <= 45 degrees.
+    angular_hindsight_limit: 0.7853981633974483
+    wrench_event_probabilities: [0.4, 0.4, 0.2]
+reward:
+  tracking:
+    # Recovery experiment: relax whole-body imitation, retain endpoint rewards.
+    # Root and lower-joint tracking, sigmas and reward formulas are unchanged.
+    body_pos: {weight: 0.25}
+    body_ori: {weight: 0.25}
+    body_linvel: {weight: 0.10}
+    body_angvel: {weight: 0.10}
+  chip_metrics:
+    right_wrist_torque: {_target_: mimic_lite.chip_metric, quantity: right_wrist_torque, weight: 1.0, enabled: false}
+    right_wrist_angular_compliance: {_target_: mimic_lite.chip_metric, quantity: right_wrist_angular_compliance, weight: 1.0, enabled: false}
+    right_wrist_ori_error: {_target_: mimic_lite.chip_metric, quantity: right_wrist_ori_error, weight: 1.0, enabled: false}

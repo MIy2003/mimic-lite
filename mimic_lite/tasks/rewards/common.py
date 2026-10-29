@@ -67,6 +67,20 @@ class joint_pos_limits(BaseReward, namespace="mimic_lite"):
 #         return -(violation_high + violation_low).sum(dim=1, keepdim=True)
 
 
+class undesired_ground_contacts(BaseReward, namespace="mimic_lite"):
+    """Count non-foot/non-hand bodies contacting terrain above the threshold."""
+
+    def _initialize_impl(self, sensor_name="undesired_ground_contact", force_threshold=1.0):
+        self.contact_sensor = self.env.scene.sensors[sensor_name]
+        self.force_threshold = force_threshold
+
+    def _compute(self):
+        # MJLab history: [environment, primary body, history, xyz].
+        force = self.contact_sensor.data.force_history
+        hit = (force.norm(dim=-1) > self.force_threshold).any(dim=-1)
+        return hit.float().sum(dim=1, keepdim=True)
+
+
 class self_collisions(BaseReward, namespace="mimic_lite"):
     def _initialize_impl(
         self,

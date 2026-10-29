@@ -48,7 +48,12 @@ def main(cfg: DictConfig):
             record("torque", torque[:, ids])
             record("root_omega", data.root_com_ang_vel_b)
             record("command", carry["command"])
-            record("compliance", command.chip.compliance)
+            if command.chip.compliance_mode == "wrist_6d":
+                c = command.chip.compliance_6d
+                record("compliance", torch.cat((c, torch.zeros_like(c[:, :1])), 1))
+                record("couple", command.chip.couple)
+            else:
+                record("compliance", command.chip.compliance)
             record("force", command.chip.force)
             if command.chip.compliance_mode == "wrist_axis":
                 record("stiffness_axis", command.chip.stiffness_axis)
